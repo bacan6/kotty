@@ -1,0 +1,1 @@
+<p style="text-align: center;font-size:30px;color:#ccc;">Belum ada data</p>

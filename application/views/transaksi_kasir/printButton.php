@@ -1,0 +1,1 @@
+<a class="btn btn-primary" onclick="printContent('form-closing')" id="printExecute" data-tanggal="<?php echo $tanggal; ?>"><i class="fa fa-print"></i> Print</a>

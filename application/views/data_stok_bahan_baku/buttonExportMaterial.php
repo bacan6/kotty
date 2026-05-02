@@ -1,0 +1,2 @@
+<a href="<?php echo base_url('dataStokBahanBaku/exportExcelBahanBakuFilter?idKategori='.$idKategori.'&stokSign='.$stokSign.'&stokValue='.$stokValue.'&priceSign='.$priceSign.'&priceSignValue='.$priceSignValue); ?>" class="btn btn-success"><i class="fa fa-file-excel-o"></i> Export Excel</a>
+<a href="<?php echo base_url('dataStokBahanBaku/exportPdfFilter?idKategori='.$idKategori.'&stokSign='.$stokSign.'&stokValue='.$stokValue.'&priceSign='.$priceSign.'&priceSignValue='.$priceSignValue); ?>" class="btn btn-danger"><i class="fa fa-file-pdf-o"></i> Export Pdf</a>

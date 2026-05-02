@@ -1,0 +1,89 @@
+<div class="wraper container-fluid">
+    <div class="portlet"><!-- /primary heading -->
+        <div id="portlet2" class="panel-collapse collapse in">
+            <div class="portlet-body">
+                <div class="row">
+                    <div class="col-md-12" style="text-align: right;">
+                        <a onclick="printContent('area-print')" class="btn btn-default"> <i class="fa fa-print"></i> Print </a>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-12" id="area-print" style="padding:5px;font-size: 13px;">
+                        <!-- <table width="100%">
+                            <?php
+                                foreach($header->result() as $hd){
+                            ?>
+                            <tr>
+                                <td style="text-align: center;">
+                                    <?php echo $hd->nama_perusahaan; ?><br>
+                                    LABEL HARGA
+                                </td>
+                            </tr>
+                            <?php } ?>
+                        </table> -->
+
+                        <!-- <table width="100%" style="margin-top: 5px;font-size: 12px;">
+                            <tr>
+                                <td width="50%">
+                                    <table width="100%">
+
+                                        <tr>
+                                            <td style="width: 15%;">No Pelabelan</td>
+                                            <td style="width: 1%;">:</td>
+                                            <td><?php echo $_GET['no_po']; ?></td>
+                                        </tr>
+
+                                                                            
+                                    </table>
+                                </td>
+
+                            </tr>
+                        </table> -->
+
+                        
+
+                            <?php
+                                $i=1;
+                                $value = 0;
+                                foreach($label_item->result() as $row){
+                            ?>
+                            <table width="124px" style="float:left;font-size: 8px;margin-bottom:11.3px;margin-left:7.5px;float:left;margin-right:3.7px;max-width:124.7px!important;width:124.7px!important;max-height:56.69px!important;height:56.69px;vertical-align:top">
+                            <tr>
+                                <td style="max-height:56.69px!important;height:56.69px;padding:2px;max-width:120px!important;overflow-wrap: break-word;min-height:10px;"  valign=middle align=center>
+                                <!-- <div style="font-weight:bold;font-size:7px;margin-top:2px" align=center>Rp <?php echo number_format($row->harga,'0',',','.'); ?></div>     -->
+                                <div align=center style="font-size:6px;line-height:1em;margin-top:-20px;margin-top:-5px;width:124px">
+                                <span style="width:100%;"><?php echo strtoupper($row->nama_produk); ?> - <b>Rp <?php echo number_format($row->harga,'0',',','.'); ?></b></span>
+                                </div>
+                                <center><img src="<?php echo base_url('barcode.php?h=35&f=svg&s=code128&g=m&d='.$row->id_produk); ?>" style="min-height:20px;margin-bottom:0" width=155 height=30 /></center>
+                                
+                                </td>
+                            </tr>
+                            </table>
+                            <table width="124px" style="font-size: 8px;margin-bottom:11.3px;margin-left:7.5px;float:left;margin-right:3.7px;max-width:124.7px!important;width:124.7px!important;max-height:56.69px!important;height:56.69px;vertical-align:top">
+                            <tr>
+                                <td style="max-height:56.69px!important;height:56.69px;padding:2px;max-width:120px!important;overflow-wrap: break-word;min-height:10px;"  valign=middle align=center>
+                                <!-- <div style="font-weight:bold;font-size:7px;margin-top:2px" align=center>Rp <?php echo number_format($row->harga,'0',',','.'); ?></div>     -->
+                                <div align=center style="font-size:6px;line-height:1em;margin-top:-20px;margin-top:-5px;width:124px">
+                                <span style="width:100%;"><?php echo strtoupper($row->nama_produk); ?> - <b>Rp <?php echo number_format($row->harga,'0',',','.'); ?></b></span>
+                                </div>
+                                <center><img src="<?php echo base_url('barcode.php?h=35&f=svg&s=code128&g=m&d='.$row->id_produk); ?>" style="min-height:20px;margin-bottom:0" width=155 height=30 /></center>
+                                
+                                
+                                </td>
+                            </tr>
+                            </table>
+                                
+                            
+                            <?php $value = $value+$row->total; $i++; } ?>
+
+                            <?php
+                                    $uri = $this->uri->segment(1);
+
+                                    ?>
+                        
+                    </div>
+                </div>    
+            </div>
+        </div>
+    </div> <!-- /Portlet -->	
+</div>

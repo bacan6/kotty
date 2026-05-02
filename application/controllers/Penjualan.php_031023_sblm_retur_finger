@@ -1,0 +1,2907 @@
+<?php
+defined('BASEPATH') OR exit('No direct script access allowed');	
+
+require APPPATH . '/libraries/BaseController.php';
+
+class Penjualan extends BaseController{
+	function __construct(){
+		parent::__construct();
+		$this->load->helper("url");
+		$this->load->library('session');
+		$this->load->model(array("model1","model_penjualan"));
+		$this->load->database();
+
+		$this->isLoggedIn($this->global['idUser'],2,7);
+	}
+
+	function open_verifikasi(){
+		$ip = $_SERVER['REMOTE_ADDR'];
+		$idUser = $_POST['username'];
+		$data = array(
+						"idUser" => $idUser,
+						"ip" => $ip
+					);
+		$this->model_penjualan->insertCartApproved($data);
+		$respon = array("username" => $idUser);
+		echo json_encode($respon);
+	}
+	function cek_verifikasi(){
+		$ip = $_SERVER['REMOTE_ADDR'];
+		$idUser = $_POST['username'];
+		$cek = $this->db->get_where("ap_cart_approved", array("idUser" => $idUser,"ip" => $ip,"status" => 1));
+		$rows = $cek->num_rows();
+		if($rows > 0){
+			$ps = $this->model_penjualan->cekPass($idUser);
+			$respon = array("status" => 1,"ps" => $ps);
+		}else{
+			$respon = array("status" => 0,"ps" => '');
+		}
+		echo json_encode($respon);
+	}
+	function index(){
+		$data['pageTitle'] = "SOLUSI POS - Penjualan";
+		$data['permitAccess'] = $this->global['permitAccess'];
+		$data['permitAccessSub'] = $this->global['permitAccessSub'];
+		$data['navigation'] = $this->model1->callNavigation();
+		$this->load->view("navigation",$data);
+		$data['produk'] = $this->model1->get_produk_select2();
+		//$data['provinsi'] = $this->db->get("ae_provinsi");
+		$data['payment_type'] = $this->db->get("ap_payment_type");
+		$idUser = $this->global['idUser'];
+
+		$ip = $_SERVER['REMOTE_ADDR'];
+		$this->model_penjualan->deleteApprover($ip);
+
+		$_SESSION['tolakDuplikat']='';
+
+		if(!empty($_GET['idPending'])){
+			
+			$idPending = $this->input->get("idPending");
+			$cart_pending = $this->db->get_where("ap_cart_temp", array("noCart" => $idPending));
+			$rows = $cart_pending->num_rows();
+			if($rows>0){
+				$this->model_penjualan->hapusTrx($this->global['idUser']);
+			}
+			foreach($cart_pending->result() as $dt){
+				$dataCart = array(
+							"id_produk"	=> $dt->id_produk,
+							"quantity" 	=> $dt->quantity,
+							"id_user"	=> $this->global['idUser'],
+							"harga"		=> $dt->harga,
+							"hpp"		=> $dt->hpp,
+							"diskon"	=> $dt->diskon,
+							"disc_supplier" => $dt->disc_supplier,
+							"tebusmurah" => $dt->tebusmurah
+						 );
+				$this->model_penjualan->insertCart($dataCart);
+			}
+			// $data['ongkir'] = $this->model_penjualan->viewOngkirPending($idPending);
+			// $data['diskonPromosi'] = $this->model_penjualan->viewDiskonPending($idPending);
+			// $data['group_customer'] = $this->db->get("ap_customer_group");
+			// $data['provinsi'] = $this->db->get("ae_provinsi");
+			// $data['idPending'] = $_GET['idPending'];
+			// $data['idStore'] = $this->global['idStore'];
+			// $this->load->view("penjualan/bodyPendingExec_new",$data);
+			// $this->load->view("penjualan/footerPendingExec",$data);
+		}
+		//cek closing	
+		$cekClosing = $this->model1->cekClosing($this->global['idUser']);
+
+			if($cekClosing < 1){
+				$data['ongkir'] = $this->model_penjualan->viewOngkir($idUser);
+				$data['diskonPromosi'] = $this->model_penjualan->viewDiskon($idUser);
+				$data['group_customer'] = $this->db->get("ap_customer_group");
+				$data['provinsi'] = $this->db->get("ae_provinsi");
+				$data['approver'] = $this->db->get("user_approver");
+				$data['ekspedisi'] = $this->db->get("ap_ekspedisi")->result();
+				$data['idStore'] = $this->global['idStore'];
+				if($this->global['idUser']==1) $this->load->view("penjualan/body_penjualan_new",$data);
+				else $this->load->view("penjualan/body_penjualan_new",$data);
+			} else {
+				$this->load->view("penjualan/accessClosed");
+			}
+
+			$this->load->view("penjualan/footer_penjualan");
+	}
+
+	function viewVoucherFisik(){
+		$idUser 		= $this->global['idUser'];
+		$seri_voucher = $_POST['seri_voucher'];
+
+		$subtotal 		= $this->model_penjualan->totalPurchase($idUser);
+		$diskonPeritem  = $this->model_penjualan->diskonPeritemPanel($idUser);
+		$diskonBuy1Get3  = $this->model_penjualan->diskonBuy1Get3($idUser);
+		$ongkir 		= $this->model_penjualan->viewOngkir($idUser);
+		$diskonMember   = $this->model_penjualan->getDiskonMember($idUser);
+		$diskonPromosi  = $this->model_penjualan->viewDiskon($idUser);
+		$poinReimburs   = $this->model_penjualan->poinReimburs($idUser);
+		
+
+		$grandTotal     = ($subtotal+$ongkir)-($diskonPeritem+$diskonMember+$diskonPromosi+$poinReimburs+$diskonBuy1Get3);
+
+		// hapus dulu cart voucher biar tidak bentrok
+		$this->model_penjualan->hapusCartVoucherFisik($idUser);
+
+		$cekVoucher = $this->model_penjualan->cekVoucherFisik($seri_voucher);
+		//var_dump($cekVoucher);
+
+		$diskonVoucher = 0;
+		foreach ($cekVoucher as $row) {
+			$simulasi = $grandTotal-$diskonVoucher-$row->nilai;
+			if($simulasi>=0){
+				$diskonVoucher += $row->nilai;
+				$data = array(
+								"idUser" => $idUser,
+								"seri_voucher" => $row->id_voucher,
+								"diskon" => $row->nilai
+							);
+				$this->model_penjualan->insertVoucherFisik($data);
+			}
+			$data = '';
+			//var_dump($row);
+			//echo $row->nominal;
+		}
+		
+
+		if($diskonVoucher>0){
+			$msg = "<td><i class='fa fa-credit-card'></i> F.Voucher</td>";
+			$msg.= "<td align='right'>".number_format($diskonVoucher,'0',',','.')."</td>";
+
+			echo $msg;
+		}else echo "";
+	}
+
+	function invoice_setorankasir(){
+		//error_reporting(E_ALL);ini_set('display_errors', true);
+		$no_setor = $_GET['no_setor'];
+		$id_store = $this->model1->id_store_setoran($no_setor);
+		$data['receipt'] = $this->db->get_where("ap_store",array("id_store" => $id_store));
+		$data['setoran_item'] = $this->model1->setoran_item($no_setor);
+
+		$idKasir 	= $this->model1->getIdKasirSetor($no_setor);
+		$tanggal 	= $this->model1->tanggal_setor($no_setor);
+		$jam 		= $this->model1->jam_setor($no_setor);
+		$data['setorBefore'] = $this->model1->setorBefore($idKasir,$tanggal,$jam,$no_setor);
+
+		$this->db->select("ap_payment_account.*,ap_payment_type.payment_type,
+			SUM(ap_invoice_number.total+ap_invoice_number.surcharge-ap_invoice_number.diskon-ap_invoice_number.diskon_free-ap_invoice_number.diskon_otomatis-ap_invoice_number.poin_value) as penjualan");
+		$this->db->from("ap_invoice_number");
+		$this->db->join("ap_payment_type","ap_payment_type.id = ap_invoice_number.tipe_bayar");
+		$this->db->join("ap_payment_account","ap_invoice_number.tipe_bayar = ap_payment_account.id_payment_type and ap_invoice_number.sub_account=ap_payment_account.id_payment_account","LEFT");
+		$this->db->where("ap_payment_type.id>1");
+		$this->db->where("ap_invoice_number.id_pic",$idKasir);
+		$this->db->like("ap_invoice_number.tanggal",$tanggal);
+		$this->db->order_by("ap_payment_account.id_payment_type","ASC");
+		$this->db->order_by("ap_payment_account.id_payment_account","ASC");
+		$this->db->group_by("ap_payment_account.id_payment_account","ASC");
+
+		$channel = $this->db->get();
+		$data['channel'] = $channel->result();
+
+		
+		$data['nama_kasir'] = $this->model1->nama_kasir($idKasir);
+		$data['cash'] = $this->model_penjualan->cash_value($idKasir,$tanggal);
+		$data['voucher'] = $this->model_penjualan->voucher_value($idKasir,$tanggal);
+		$data['retur'] = $this->model_penjualan->retur_value($idKasir,$tanggal)+0;
+		$data['struk'] = $this->model_penjualan->total_struk($idKasir,$tanggal);
+
+
+		$this->global['pageTitle'] = "SolusiPOS.my.id - Invoice Setoran Kasir";
+		
+		$this->loadViews("penjualan/body_invoice_setoran",$this->global,$data,"penjualan/footerInvoiceSetoran");
+		
+		
+	}
+
+	function setoranList(){
+		$idUser = $this->global['idUser'];
+		//$pending = $this->db->get_where("ap_cart_temp_no",array("status" => 0,"tanggal like '".date('Y-m-d')."%'"));
+		$this->db->select("setoran_kasir.*,users.first_name");
+		$this->db->from("setoran_kasir");
+		$this->db->join("users","users.id = setoran_kasir.id_user");
+		$this->db->order_by("setoran_kasir.no_setor","DESC");
+		$this->db->limit('100');
+		$pending = $this->db->get();
+		$data['pendingList'] = $pending->result();
+		$this->global['pageTitle'] = "SolusiPOS.my.id - Daftar Setoran Kasir";
+		$this->loadViews("penjualan/daftar_setoran",$this->global,$data,"footer_empty");
+	}
+
+	function setoran_kasir(){
+		$this->global['pageTitle'] = "SolusiPOS.my.id - Setor Kasir";
+		$data['cash'] = $this->model_penjualan->cash_value($this->global['idUser'],date('Y-m-d'));
+		$data['retur'] = $this->model_penjualan->retur_value($this->global['idUser'],date('Y-m-d'));
+
+		$data['setorBefore'] = $this->model1->setorBefore($this->global['idUser'],date('Y-m-d'));
+		// $this->db->select("ap_payment_account.*,ap_payment_type.payment_type");
+		// $this->db->from("ap_payment_account");
+		// $this->db->join("ap_payment_type","ap_payment_type.id = ap_payment_account.id_payment_type");
+		// $this->db->where("ap_payment_type.id>1");
+		// //$this->db->where("ap_cart_temp_no.tanggal like '2022-02-27%'");
+		// $this->db->order_by("ap_payment_account.id_payment_type","ASC");
+		// $this->db->order_by("ap_payment_account.id_payment_account","ASC");
+
+		// $channel = $this->db->get();
+		// $data['channel'] = $channel->result();
+		$this->loadViews("penjualan/body_setor_kasir",$this->global,$data,"penjualan/footersetorankasir");
+	}
+
+	function setorankasirsql(){
+		$tanggal 		= date('Y-m-d');
+
+		$count_setor 	= $this->model1->count_setor($tanggal)+1;
+
+		$back_id 		= sprintf("%03d",$count_setor);
+
+		$id_user 		= sprintf("%03d",$this->global['idUser']);
+		$no_setor 		= "ST-".date('ymd').'-'.$id_user.'-'.$back_id;
+
+		$data_setor 	= array(
+									"no_setor"		=> $no_setor,
+									"id_user"		=> $this->global['idUser'],
+									"tanggal"		=> date('Y-m-d'),
+									"jam_setor"		=> date('H:i:s'),
+                                    "id_toko"	    => $this->global['idStore'],
+									"n100k"			=> $_POST['n100k'],
+									"n75k"			=> $_POST['n75k'],
+									"n50k"			=> $_POST['n50k'],
+									"n20k"			=> $_POST['n20k'],
+									"n10k"			=> $_POST['n10k'],
+									"n5k"			=> $_POST['n5k'],
+									"n2k"			=> $_POST['n2k'],
+									"n1kp"			=> $_POST['n1kp'],
+									"n1kc"			=> $_POST['n1kc'],
+									"n500"			=> $_POST['n500'],
+									"n200"			=> $_POST['n200'],
+									"n100"			=> $_POST['n100'],
+									"penggantian"	=> $_POST['penggantian'],
+									"voucher"		=> $_POST['voucher'],
+									"catatan"		=> $_POST['catatan']
+							   );
+		$this->model_penjualan->insertSetoran($data_setor);
+		echo $no_setor;
+	}
+
+
+
+	function getProdukPrice(){
+		$sku 	= $_POST['sku'];
+		$idStore = $this->global['idStore'];
+
+		$this->load->model('model_penjualan');
+
+		$harga_produk = $this->model_penjualan->getProdukPrice($sku,$idStore);
+
+		echo $harga_produk;
+	}
+
+
+	function select2_customer(){
+		$query = $_POST['query'];
+
+		$customer = $this->model1->get_customer_select2($query);
+			echo "<option>".'--Pilih Customer--'."</option>";
+		foreach($customer->result() as $dt){
+			echo "<option value='".$dt->id_customer."' data-diskon='".$dt->diskon."'>".$dt->nama."</option>";
+		}
+	}
+
+	function get_diskon_customer(){
+		$id 	= $_POST['id'];
+		$diskon_customer  = $this->model1->get_diskon_customer($id);
+
+		echo  $diskon_customer;
+	}
+
+	function list_kabupaten(){
+		$id = $_POST['id'];
+
+		$kabupaten = $this->db->get_where("ae_kabupaten", array("id_provinsi" => $id));
+
+		foreach($kabupaten->result() as $dt){
+			echo "<option value='".$dt->kabupaten_id."'>".$dt->nama_kabupaten."</option>";
+		}
+	}
+
+	function list_kecamatan(){
+		$id  = $_POST['id'];
+
+		$kecamatan = $this->db->get_where("ae_kecamatan",array("kabupaten_id" => $id));
+
+		foreach($kecamatan->result() as $dt){
+			echo "<option value='".$dt->id_kecamatan."'>".$dt->kecamatan."</option>";
+		}
+	}
+
+	function get_alamat_customer(){
+		$id = $_GET['id'];
+
+		$customer = $this->db->get_where("ap_customer",array("id_customer" => $id));
+
+		foreach($customer->result() as $row){
+			$array_data[] = array(
+									"alamat" 		=> $row->alamat,
+									"idProvinsi"	=> $row->id_provinsi,
+									"idKabupaten"	=> $row->id_kabupaten,
+									"idKecamatan"	=> $row->id_kecamatan,
+									"kontak"		=> $row->kontak
+								 );
+		}
+
+		echo json_encode($array_data);
+
+	}
+
+	function returPenjualanSQL(){
+		$no_invoice 	= $_POST['noInvoice'];
+		$tanggal 		= date('Y-m-d');
+
+		$count_retur 	= $this->model1->count_retur($tanggal)+1;
+
+		$back_id 		= sprintf("%03d",$count_retur);
+
+		$id_user 		= sprintf("%02d",$this->global['idUser']);
+		$no_retur 		= "RN-".date('ymd').'-'.$id_user.'-'.$back_id;
+
+		$data_retur 	= array(
+									"no_retur"		=> $no_retur,
+									"no_invoice" 	=> $no_invoice,
+									"pic"			=> $this->global['idUser'],
+									"tanggal"		=> date('Y-m-d H:i'),
+									"keterangan"	=> "",
+                                    "id_toko"	    => $this->global['idStore']
+							   );
+
+		
+		
+		$idStore = $this->global['idStore'];
+
+		$dataProduk = $_POST['dataProduk'];
+
+		$decodeJSON = json_decode(stripcslashes($dataProduk));
+		$jumlah_retur=0;
+		foreach($decodeJSON as $dt){
+			$sku 	= $dt->idProduk;
+			$qty 	= $dt->qty;
+			$harga 	= $dt->hargaJual;
+			$diskon = $dt->diskon;
+			$hpp 	= $dt->hpp;
+
+			$inv_qty = $this->model_penjualan->cekInvoiceItemQty($sku,$no_invoice);
+			if($qty > 0 && $inv_qty>0){
+
+				$data_item[] = array(
+										"no_retur" 		=> $no_retur,
+										"id_produk"		=> $sku,
+										"qty"			=> $qty,
+										"harga"			=> $harga,
+										"tanggal"		=> date('Y-m-d'),
+										"diskon" 		=> ($qty*$diskon)
+									);
+									$jumlah_retur++;
+				//kembalikan stok
+				$stokLamaToko = $this->model_penjualan->cekStokPerStore($sku,$idStore);
+
+				$dataUpdate = array(
+										"stok" 			=> $stokLamaToko+$qty
+								);
+
+				$this->model_penjualan->updateStokPerstore($idStore,$sku,$dataUpdate);
+
+				// Kurangi pendapatan
+				$dataUpdate2 = array(
+					"qty" 		=> $inv_qty-$qty,
+					"diskon"	=> (($inv_qty-$qty)*$diskon)	
+				);
+
+				$this->model_penjualan->updateInvoiceItemRetur($no_invoice,$sku,$dataUpdate2);
+
+				$total = $qty*$harga;
+				$subhpp = $qty*$hpp;
+
+				$cekHarga = $this->model_penjualan->hargaOnInvoice($no_invoice);
+
+				foreach($cekHarga as $row){
+					$totalNew = $row->total - $total;
+					$hppNew = $row->hpp - $subhpp;			
+				}
+				
+				$cekDiskonOtomatis = $this->model_penjualan->cekDiskonOtomatis($no_invoice);
+				$diskon_otomatis = $cekDiskonOtomatis - ($qty*$diskon);
+				$diskon_otomatis = $cekDiskonOtomatis<0 || $diskon_otomatis<0? 0:$diskon_otomatis;
+				$dataUpdate3 = array(
+					"total" 			=> $totalNew,
+					"hpp" 				=> $hppNew,
+					"diskon_otomatis"	=> $diskon_otomatis
+				);
+
+				$this->model_penjualan->updateInvoiceNumberRetur($no_invoice,$dataUpdate3);
+			}
+
+			
+			
+		}
+		if ($jumlah_retur>0) 
+		{
+			$this->db->insert_batch("ap_retur_item",$data_item);
+			$this->model_penjualan->insertReturPenjualanSQL($data_retur);
+		}
+
+	}
+
+	function invoiceRetur(){
+		$noInvoice = $_POST['noInvoice'];
+		$data['invoiceRetur'] = $this->model_penjualan->invoiceRetur($noInvoice);
+		$this->load->view("penjualan/invoiceRetur",$data);
+	}
+
+	function printInvoiceRetur(){
+		$noRetur = $this->input->get('noRetur');
+		$no_invoice = $this->db->get_where("ap_retur",array('no_retur' => $noRetur))->row()->no_invoice;
+		$id_store = $this->model1->id_store_invoice($no_invoice);
+		$data['receipt'] = $this->db->get_where("ap_store",array("id_store" => $id_store));
+		$data['invoiceItem'] = $this->model_penjualan->returItemSale($noRetur);
+		$this->load->view("penjualan/invoiceReturCetak",$data);
+	}	
+
+	function data_penjualan(){
+		$this->global['pageTitle'] = "SOLUSI POS - Data Penjualan";
+		$this->loadViews("penjualan/body_data_penjualan",$this->global,NULL,"penjualan/footerDataPenjualan");
+	}
+
+	function suratJalan(){
+		$noInvoice = $this->input->get('no_invoice');
+		$idStore = $this->model_penjualan->getIdStore($noInvoice);
+		$data['header'] = $this->db->get_where("ap_store",array("id_store" => $idStore))->row();
+		$data['invoiceInfo'] = $this->model_penjualan->invoiceInfo($noInvoice);
+		$data['invoiceItem'] = $this->model1->invoice_item($noInvoice);
+		$this->global['pageTitle'] = "SOLUSI POS - Surat Jalan";
+		$this->loadViews("penjualan/suratJalan",$this->global,$data,"footer_empty");
+	}
+
+	function shippingLabel(){
+		$noInvoice = $this->input->get('no_invoice');
+		$idStore = $this->model_penjualan->getIdStore($noInvoice);
+		$data['header'] = $this->db->get_where("ap_store",array("id_store" => $idStore))->row();
+		$data['invoiceInfo'] = $this->model_penjualan->invoiceInfo($noInvoice);
+		$data['invoiceItem'] = $this->model1->invoice_item($noInvoice);
+
+		$this->load->library('ciqrcode');
+
+		$qr['data'] 	= $noInvoice;
+		$qr['level']	= 'H';
+		$qr['size']		= '4';
+		$qr['savename']	= FCPATH."qr/".$noInvoice.".png";
+		$this->ciqrcode->generate($qr);
+
+
+
+		$this->global['pageTitle'] = "SOLUSI POS - Shipping Label";
+		$this->loadViews("penjualan/shippingLabel",$this->global,$data,"footer_empty");
+	}
+
+	function invoiceA4(){
+		$noInvoice = $this->input->get('no_invoice');
+		$idStore = $this->model_penjualan->getIdStore($noInvoice);
+		$data['header'] = $this->db->get_where("ap_store",array("id_store" => $idStore))->row();
+		$data['invoiceInfo'] = $this->model_penjualan->invoiceInfo($noInvoice);
+		$data['invoiceItem'] = $this->model1->invoice_item($noInvoice);
+		$data['qty_barang'] = $this->model1->qty_barang_struk($noInvoice);
+		$data['item_barang'] = $this->model1->item_barang_struk($noInvoice);
+
+		$this->global['pageTitle'] = "SOLUSI POS - Invoice Penjualan";
+		$this->loadViews("penjualan/invoiceA4",$this->global,$data,"footer_empty");
+	}
+
+	function datatableDaftarPenjualan(){
+		$draw 		= $_REQUEST['draw'];
+		$length 	= $_REQUEST['length'];
+		$start 		= $_REQUEST['start'];
+		$search 	= $_REQUEST['search']["value"];
+
+		$total 			 			= $this->model1->total_penjualan_all($this->global['idStore'],$this->global['idUser']);
+		$output 					= array();
+		$output['draw']	 			= $draw;
+		$output['recordsTotal'] 	= $output['recordsFiltered']=$total;
+		$output['data'] 			= array();
+
+		if($search!=""){
+			$query = $this->model1->daftarPenjualan($length,$start,$search,$this->global['idStore'],$this->global['idUser']);
+			$output['recordsTotal'] = $output['recordsFiltered'] = $query->num_rows();
+		} else {
+			$query = $this->model1->daftarPenjualan($length,$start,$search,$this->global['idStore'],$this->global['idUser']);
+		}
+
+		$nomor_urut=$start+1;
+		foreach ($query->result_array() as $dt) {
+			$output['data'][]=array($nomor_urut,"<a href='".base_url('penjualan/invoice_penjualan?no_invoice='.$dt['no_invoice'])."'>".$dt['no_invoice']."</a>",$dt['payment_type']." ".$dt['account'],date_format(date_create($dt['tanggal']),'d/m/y H:i'),number_format($dt['total'],'0',',','.'),number_format($dt['ongkir'],'0',',','.'),number_format($dt['diskon'],'0',',','.'),number_format($dt['diskon_free'],'0',',','.'),number_format($dt['poin_value'],'0',',','.'),number_format($dt['diskon_otomatis'],'0',',','.'),number_format(($dt['total']+$dt['ongkir'])-($dt['diskon']+$dt['diskon_free']+$dt['poin_value']+$dt['diskon_otomatis']),'0',',','.'));
+			$nomor_urut++;
+		}
+
+		echo json_encode($output);
+	}
+
+	function invoice_penjualan(){
+		$no_invoice = $_GET['no_invoice'];
+		$id_store = $this->model1->id_store_invoice($no_invoice);
+		$data['receipt'] = $this->db->get_where("ap_store",array("id_store" => $id_store));
+		$data['no_invoice'] = $this->model1->invoice_ket($no_invoice);
+		$data['invoice_item'] = $this->model1->invoice_item($no_invoice);
+
+		$idKasir = $this->model1->getIdKasir($no_invoice);
+
+		$data['nama_kasir'] = $this->model1->nama_kasir($idKasir);
+		$data['item_barang'] = $this->model1->item_barang_struk($no_invoice);
+		$data['qty_barang'] = $this->model1->qty_barang_struk($no_invoice);
+		$data['tipe_bayar'] = $this->model1->tipe_bayar_struk($no_invoice);
+
+		$data['tipe_kustomer'] = $this->model1->tipe_kustomer($no_invoice);
+
+		$this->load->library('ciqrcode');
+
+		$qr['data'] 	= $no_invoice;
+		$qr['level']	= 'H';
+		$qr['size']		= '10';
+		$qr['savename']	= FCPATH."qr/".$no_invoice.".png";
+		$this->ciqrcode->generate($qr);
+
+
+		$this->global['pageTitle'] = "SOLUSI POS - Invoice Penjualan";
+		
+		$this->loadViews("penjualan/body_invoice_penjualan",$this->global,$data,"penjualan/footerInvoicePenjualan");
+		
+		
+	}
+
+	function tempo_form(){
+		$this->load->view("penjualan/jatuh_tempo");
+	}
+
+	function use_profil_address(){
+		$data['provinsi'] = $this->db->get("ae_provinsi");
+
+		$id_customer 	= $_POST['id'];
+		$data['customer'] = $this->db->get_where("ap_customer",array("id_customer" => $id_customer));
+
+		$this->load->view("penjualan/body_use_profil_address",$data);
+	}
+
+	function data_customer_poin(){
+		$idUser = $this->global['idUser'];
+		$cekIfPoinExist = $this->model_penjualan->cekIfPoinExist($idUser);
+
+		$data['idUser'] = $this->global['idUser'];
+
+		if($cekIfPoinExist > 0){
+			$idMember = $this->model_penjualan->getIdMemberDiskon($idUser);
+			$id = $idMember;
+			$data['customer_poin'] = $this->model1->data_customer_poin($id);
+			$data['poinValue'] 	  = $this->model_penjualan->poinValue($idUser);
+			$data['kategori_member'] 	  = $this->model_penjualan->cekKategoriMember($id);
+			$this->load->view("penjualan/reimbursment_point",$data);
+		} else {
+			if(!empty($_POST['id'])){
+				$id = $_POST['id'];
+				$data['customer_poin'] = $this->model1->data_customer_poin($id);
+				$data['kategori_member'] 	  = $this->model_penjualan->cekKategoriMember($id);
+				$data['poinValue'] 	  = 0;
+				$this->load->view("penjualan/reimbursment_point",$data);
+			} 
+		}
+	}
+
+	function data_customer_poinPending(){
+		$noCart = $_POST['noCart'];
+		$cekIfPoinExist = $this->model_penjualan->cekIfPoinExistPending($noCart);
+		$data['idUser'] = $this->global['idUser'];
+
+		if($cekIfPoinExist > 0){
+			$idMember = $this->model_penjualan->getIdMemberDiskonPending($noCart);
+			$id = $idMember;
+			$data['customer_poin'] = $this->model1->data_customer_poin($id);
+			$data['poinValue'] 	  = $this->model_penjualan->poinValuePending($noCart);
+			$data['kategori_member'] 	  = $this->model_penjualan->cekKategoriMember($id);
+			$this->load->view("penjualan/reimbursment_pointPending",$data);
+		} else {
+			if(!empty($_POST['id'])){
+				$id = $_POST['id'];
+				$data['customer_poin'] = $this->model1->data_customer_poin($id);
+				$data['kategori_member'] 	  = $this->model_penjualan->cekKategoriMember($id);
+				$data['poinValue'] 	  = 0;
+				$this->load->view("penjualan/reimbursment_pointPending",$data);
+			} 
+		}
+	}
+
+	function get_max_poin(){
+		$id_customer = $_POST['id'];
+
+		$max_poin = $this->model1->poin_lama($id_customer);
+
+		echo $max_poin;
+	}
+
+	function sub_account(){
+		$id 	= $_POST['id'];
+		
+		$query = $this->db->order_by('urutan','ASC')->get_where("ap_payment_account",array("id_payment_type" => $id));
+
+		$data['sub_account'] = $query;
+
+		$rows = $query->num_rows();
+
+		if($rows > 0 ){
+			$this->load->view("sub_account",$data);
+		} 
+	}
+
+	function cekStokPerStore(){
+		$sku 	= $_POST['sku'];
+		$idStore = $this->global['idStore'];
+		$qty = $_POST['qty'];
+		$id = $_POST['id'];
+		
+		$cekStok = $this->model_penjualan->cekStokPerStore($sku,$idStore);
+
+		if($qty <= $cekStok){
+			echo "StokEnough";
+		} else {
+			$currentCart = $this->model_penjualan->currentQtyPeritem($id);
+		 	//echo $currentCart;
+            echo "StokEnough";
+		}
+	}
+
+	function ajax_customer(){
+		$q 	= $_GET['term'];
+
+		$customer = $this->model1->customer_search($q);
+
+		$data_array = array();
+
+		foreach($customer->result() as $row){
+			$data_array[] = array(
+									"id" 	=> $row->id_customer,
+									"text"	=> $row->nama." / ".$row->no_kartu ." / ".$row->point ."poin"
+								 );
+		}
+
+		echo json_encode($data_array);
+	}
+
+	function ajax_produk(){
+		$q 	= $_GET['term'];
+
+		$id_store = $this->global['idStore'];
+		
+		
+		$customer = $this->model_penjualan->produk_search($q,$id_store);
+
+		$data_array = array();
+
+		foreach($customer->result() as $row){
+			$data_array[] = array(
+									"id" 	=> $row->id_produk,
+									"text"	=> $row->id_produk." / ".$row->nama_produk." / Rp".number_format($row->harga,0,',','.') . " Qty: ".$row->stok
+								 );
+		}
+
+		echo json_encode($data_array);
+	}
+
+	function cek_diskon(){
+		$sku 	= $_POST['sku'];
+		$cek_diskon = $this->model1->cek_diskon($sku);
+
+		echo $cek_diskon;
+	}
+
+	function ambil_nilai_diskon(){
+		$sku 	= $_POST['sku'];
+		$qty	= $_POST['qty'];
+
+		$idStore = $this->global['idStore'];
+		$this->db->order_by('(discount+disc_supplier)', 'DESC');
+		$nilaiDiskon = $this->db->get_where("ap_produk_discount_rules",array("id_produk"=> $sku,"id_toko"=> $idStore,"date_start <= '".date('Y-m-d')."'"));
+		$countRulesIfExist = $nilaiDiskon->num_rows();
+
+		if($countRulesIfExist > 0){	
+			foreach($nilaiDiskon->result() as $row){
+				if($qty >= $row->qty){
+					if(strtotime(date('Y-m-d')) >= strtotime($row->date_start) && strtotime(date('Y-m-d')) <= strtotime($row->date_end)){
+						if($row->setHari==1){
+							$HariID = explode(".",$row->HariID);
+							if (in_array(date('w'),$HariID)){
+								if ($row->setJam==1){
+									if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+										$diskon = $row->discount + $row->disc_supplier;
+									}else $diskon = 0;
+								}else $diskon = $row->discount + $row->disc_supplier;
+							}else $diskon = 0;
+						}else if ($row->setJam==1 && $row->setHari!=1){
+							if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+								$diskon = $row->discount + $row->disc_supplier;
+							}else $diskon = 0;
+						}else $diskon = $row->discount + $row->disc_supplier;
+					} else {
+						$diskon = 0;
+					}
+				} 
+			}
+			return $diskon; 
+
+		} else {
+			return 0;
+		}
+	}
+
+	function pendingTrx(){
+		$idUser 	  = $this->global['idUser'];
+		$cekNoPending = $this->model_penjualan->cekNoPending($idUser);
+
+		//generate pending number
+		$noPendingTrx = "TN/".date('ymd')."/".sprintf("%02d",$idUser)."/".sprintf("%02d",$cekNoPending+1);
+
+		//insert into pending number table
+		$dataPending = array(
+								"cartNo"		=> $noPendingTrx,
+								"idUser"		=> $idUser,
+								"tanggal"		=> date('Y-m-d H:i:s')
+							);
+
+		$this->model_penjualan->insertCartTemp($dataPending);
+
+		//insert data to ap_cart_temp
+		$viewCart = $this->model_penjualan->dataCart($idUser,$this->global['idStore']);
+
+		foreach($viewCart as $row){
+			$sku 			= $row->id_produk;
+			$harga 			= $row->harga;
+			$hpp 			= $row->hpp;
+			$qty 			= $row->qty;
+			$diskon_item 	= $row->diskon;
+
+			$data_item[] = array(
+									"id_produk"	 	=> $sku,
+									"quantity"		=> $qty,
+									"noCart" 		=> $noPendingTrx,
+									"harga"			=> $harga,
+									"diskon"		=> $diskon_item,
+									"hpp" 			=> $hpp
+
+								  );
+		}
+
+		$this->model_penjualan->inserCartTempItem($data_item,$idUser);
+	}
+
+	function pendingList(){
+		$idUser = $this->global['idUser'];
+		$date = date('Y-m-d');
+
+		$this->db->select("*");
+		$this->db->from("ap_cart_temp_no");
+		$this->db->where("idUser",$idUser);
+		$this->db->where("status",0);
+		$this->db->like("tanggal",$date);
+		$data['pendingList'] = $this->db->get()->result();
+
+		//$data['pendingList'] = $this->db->get_where("ap_cart_temp_no",array("idUser" => $idUser,"status" => 0,"tanggal like '$date%'"))->result();
+		$this->global['pageTitle'] = "SOLUSI POS - Daftar Penjualan Tunda";
+		$this->loadViews("penjualan/daftar_tunggu",$this->global,$data,"footer_empty");
+	}
+
+	function hapus_pending(){
+		$id_pending = $_GET['id_pending'];
+
+		$this->db->delete("ap_order_temp_no",array("id_pending" => $id_pending));
+		$this->db->delete("ap_order_temp",array("id_pending" => $id_pending));
+
+		$affect = $this->db->affected_rows();
+			
+		if($affect > 0){
+				$message = "<div class='alert alert-success alert-dismissable'>";
+                $message .= "<button type='button' class='close' data-dismiss='alert' aria-hidden='true'>×</button>";
+                $message .= "Data Berhasil Dihapus";
+                $message .= "</div>";
+
+				$this->session->set_flashdata("message",$message);
+		} else {
+				$message = "<div class='alert alert-danger alert-dismissable'>";
+                $message .= "<button type='button' class='close' data-dismiss='alert' aria-hidden='true'>×</button>";
+                $message .= "Data Gagal Dihapus";
+                $message .= "</div>";
+
+				$this->session->set_flashdata("message",$message);
+		}
+
+		redirect("penjualan/daftar_tunggu");
+	}
+
+	function retur(){
+		$this->global['pageTitle'] = "SOLUSI POS - Retur Penjualan";
+		$this->loadViews("penjualan/body_retur",$this->global,NULL,"footer_empty");
+	}
+
+	function retur_search(){
+
+		$no_invoice = $_GET['no_invoice'];
+
+		$data['data_invoice'] = $this->model1->invoice_item($no_invoice);
+
+
+			$data['no_invoice'] = $no_invoice;
+			$data['retur_item'] = $this->model1->retur_item_invoice($no_invoice);
+
+
+
+		$data['supplier'] = $this->db->get("supplier")->result();
+		$this->global['pageTitle'] = "SOLUSI POS - Retur";
+		$this->loadViews("penjualan/body_retur_search",$this->global,$data,"penjualan/footerRetur");
+	}
+
+	function getDataProduk(){
+		
+
+		$sku 		= $_POST['sku'];
+		$idStore 	= $this->global['idStore'];
+		$id_customer= $this->model_penjualan->getIdMemberDiskon($this->global['idUser']);
+		$dataProduk = $this->model_penjualan->getProdukData($sku,$idStore);
+
+		foreach($dataProduk as $row){
+            //$stok = ;
+			if($row->harga_member>0 && !empty($id_customer)){
+				$arrayData[] = array(
+									"harga"			=> $row->harga_member,
+									"stok"			=> $row->stok,
+									"hpp"			=> $row->hpp,
+									"id_produk"		=> $row->id_produk
+								);
+			}else{
+				$arrayData[] = array(
+									"harga"		=> $row->harga,
+									"stok"		=> $row->stok,
+									"hpp"		=> $row->hpp,
+									"id_produk"	=> $row->id_produk
+								);
+
+			}
+		}
+
+		echo json_encode($arrayData);
+	}
+
+	function cekDiskon($sku){
+		//0 tidak ada diskon
+		//1 ada diskon 
+
+		$cekDiskon = $this->model_penjualan->cekDiskon($sku);
+
+		return $cekDiskon;
+	}
+
+	function ambilNilaiDiskon($sku,$qty){
+		date_default_timezone_set('Asia/Jakarta');
+        $idStore = $this->global['idStore'];
+		$idUser = $this->global['idUser'];
+		$diskon=0;
+
+		$this->db->order_by('(discount+disc_supplier)', 'ASC');
+		$nilaiDiskon = $this->db->get_where("ap_produk_discount_rules",array("id_produk"=> $sku,"id_toko"=> $idStore,"'".date('Y-m-d')."' between date_start and date_end"));
+		$countRulesIfExist = $nilaiDiskon->num_rows();
+		
+
+		if($countRulesIfExist > 0){	
+			foreach($nilaiDiskon->result() as $row){
+				if($qty >= $row->qty){
+					if(strtotime(date('Y-m-d')) >= strtotime($row->date_start) && strtotime(date('Y-m-d')) <= strtotime($row->date_end)){
+						$terjual = $this->model_penjualan->cekQuotaDiskon($sku,$row->date_start,$row->date_end);
+						if ($row->quota>0 and $terjual<$row->quota){
+							if($row->setHari==1){
+								$HariID = explode(".",$row->HariID);
+								if (in_array(date('w'),$HariID)){
+									if ($row->setJam==1){
+										if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+											$diskon = $row;
+										}
+									}else $diskon = $row;
+								}
+							}else if ($row->setJam==1 && $row->setHari!=1){
+								if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+									$diskon = $row;
+								}
+							}else $diskon = $row;
+						}else if ($row->quota==0){
+							if($row->setHari==1){
+								$HariID = explode(".",$row->HariID);
+								if (in_array(date('w'),$HariID)){
+									if ($row->setJam==1){
+										if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+											$diskon = $row;
+										}
+									}else $diskon = $row;
+								}
+							}else if ($row->setJam==1 && $row->setHari!=1){
+								if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+									$diskon = $row;
+								}
+							}else $diskon = $row;
+						}
+						
+					}
+				} 
+			}
+			return $diskon; 
+
+		} else {
+			return 0;
+		}
+	}
+
+	function diskonSupplier($sku,$qty){
+        $idStore = $this->global['idStore'];
+		$nilaiDiskon = $this->db->get_where("ap_produk_discount_rules",array("id_produk"=> $sku,"id_toko"=> $idStore,"'".date('Y-m-d')."' between date_start and date_end"));
+		$countRulesIfExist = $nilaiDiskon->num_rows();
+
+		if($countRulesIfExist > 0){	
+			foreach($nilaiDiskon->result() as $row){
+				if($qty >= $row->qty){
+					if(strtotime(date('Y-m-d')) >= strtotime($row->date_start) && strtotime(date('Y-m-d')) <= strtotime($row->date_end)){
+						$terjual = $this->model_penjualan->cekQuotaDiskon($sku,$row->date_start,$row->date_end);
+						if ($row->quota>0 and $terjual<$row->quota){
+							if($row->setHari==1){
+								$HariID = explode(".",$row->HariID);
+								if (in_array(date('w'),$HariID)){
+									if ($row->setJam==1){
+										if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+											$diskon =$row->disc_supplier;
+										}else $diskon = 0;
+									}else $diskon = $row->disc_supplier;
+								}else $diskon = 0;
+							}else if ($row->setJam==1 && $row->setHari!=1){
+								if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+									$diskon = $row->disc_supplier;
+								}else $diskon = 0;
+							}else $diskon = $row->disc_supplier;
+						}else if ($row->quota==0){
+							if($row->setHari==1){
+								$HariID = explode(".",$row->HariID);
+								if (in_array(date('w'),$HariID)){
+									if ($row->setJam==1){
+										if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+											$diskon = $row->disc_supplier;
+										}else $diskon = 0;
+									}else $diskon = $row->disc_supplier;
+								}else $diskon = 0;
+							}else if ($row->setJam==1 && $row->setHari!=1){
+								if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+									$diskon = $row->disc_supplier;
+								}else $diskon = 0;
+							}else $diskon = $row->disc_supplier;
+						}else $diskon=0;
+					} else {
+						$diskon = 0;
+					}
+				} 
+			}
+			return $diskon; 
+
+		} else {
+			return 0;
+		}
+	}
+
+	function diskonBrand($id_brand){
+		// $act = 1 -> Insert, $act = 2 -> Update
+        $idStore = $this->global['idStore'];
+		$nilaiDiskon = $this->db->get_where("ap_promo_brand_rules",array("id_brand"=> $id_brand,"id_toko"=> $idStore,"'".date('Y-m-d')."' between date_start and date_end"));
+		$countRulesIfExist = $nilaiDiskon->num_rows();
+
+		if($countRulesIfExist > 0){	
+			foreach($nilaiDiskon->result() as $row){
+				if($row->rules_type=='Count2Price' || $row->rules_type=='Count2Percent'){
+					$sum_cart = $this->model_penjualan->countCartBrand($id_brand,$this->global['idUser']);
+				}else if($row->rules_type=='Sum2Price' || $row->rules_type=='Sum2Percent'){
+					$sum_cart = $this->model_penjualan->sumCartBrand($id_brand,$this->global['idUser']);
+				}
+
+				$sum_cart++;
+
+				if($sum_cart >= $row->minBelanja){
+					if(strtotime(date('Y-m-d')) >= strtotime($row->date_start) && strtotime(date('Y-m-d')) <= strtotime($row->date_end)){
+							if($row->setHari==1){
+								$HariID = explode(".",$row->HariID);
+								if (in_array(date('w'),$HariID)){
+									if ($row->setJam==1){
+										if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+											if($row->rules_type=='Count2Price' || $row->rules_type=='Sum2Price'){
+												$diskon = array();
+												$diskon['tipe'] = 'price';
+												$diskon['nilai'] = $this->model_penjualan->updateCartBrandPrice($id_brand,$row->discount,$this->global['idUser']);
+											}
+											else if($row->rules_type=='Count2Percent' || $row->rules_type=='Sum2Percent'){
+												$diskon = array();
+												$diskon['tipe'] = 'percent';
+												$diskon['nilai'] = $this->model_penjualan->updateCartBrandPercent($id_brand,$row->discount,$this->global['idUser']);
+											}
+										}else $diskon = false;
+									}else {
+										if($row->rules_type=='Count2Price' || $row->rules_type=='Sum2Price'){
+											$diskon = array();
+											$diskon['tipe'] = 'price';
+											$diskon['nilai'] = $this->model_penjualan->updateCartBrandPrice($id_brand,$row->discount,$this->global['idUser']);
+										}
+										else if($row->rules_type=='Count2Percent' || $row->rules_type=='Sum2Percent'){
+											$diskon = array();
+											$diskon['tipe'] = 'percent';
+											$diskon['nilai'] = $this->model_penjualan->updateCartBrandPercent($id_brand,$row->discount,$this->global['idUser']);
+										}
+									}
+								}else $diskon = false;
+							}else if ($row->setJam==1 && $row->setHari!=1){
+								if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+									if($row->rules_type=='Count2Price' || $row->rules_type=='Sum2Price'){
+										$diskon = array();
+										$diskon['tipe'] = 'price';
+										$diskon['nilai'] = $this->model_penjualan->updateCartBrandPrice($id_brand,$row->discount,$this->global['idUser']);
+									}
+									else if($row->rules_type=='Count2Percent' || $row->rules_type=='Sum2Percent'){
+										$diskon = array();
+										$diskon['tipe'] = 'percent';
+										$diskon['nilai'] = $this->model_penjualan->updateCartBrandPercent($id_brand,$row->discount,$this->global['idUser']);
+									}
+								}else $diskon = false;
+							}else {
+								if($row->rules_type=='Count2Price' || $row->rules_type=='Sum2Price'){
+									$diskon = array();
+									$diskon['tipe'] = 'price';
+									$diskon['nilai'] = $this->model_penjualan->updateCartBrandPrice($id_brand,$row->discount,$this->global['idUser']);
+								}
+								else if($row->rules_type=='Count2Percent' || $row->rules_type=='Sum2Percent'){
+									$diskon = array();
+									$diskon['tipe'] = 'percent';
+									$diskon['nilai'] = $this->model_penjualan->updateCartBrandPercent($id_brand,$row->discount,$this->global['idUser']);
+								}
+							}
+						
+					} else {
+						$diskon = false;
+					}
+				} 
+			}
+			return $diskon;
+		} else {
+			return false;
+		}
+	}
+
+	function insertCart(){
+		$sku 	 = $_POST['sku'];
+		$harga 	 = $_POST['harga'];
+		$qty 	 = $_POST['qty'];
+		$hpp 	 = $_POST['hpp'];
+		$idUser = $this->global['idUser'];
+		$idStore = $this->global['idStore'];
+		$id_brand = $this->model_penjualan->cekIdBrand($sku);
+
+		// qty yg dihitung buy n get n
+		$qty_get = 0;
+
+		// Buy 1 Get 3 
+		$cekNoPromo = $this->model_penjualan->cekBuy1Get3Promo($sku);
+		if(!empty($cekNoPromo->no_promo)){
+			// $dataBut1Get3 = array(
+			// 					"diskon" => 0
+			// );
+			// $this->model_penjualan->updateBuy1Get3($cekNoPromo->no_promo,$idUser,$dataBut1Get3);
+			$cekBuy1Get3Qty = $this->model_penjualan->cekBuy1Get3QtyIns($cekNoPromo->no_promo,$idUser,$sku);
+			if($cekNoPromo->tipe=='lowest'){
+				
+			
+				$priceOn = $this->model_penjualan->cekPriceOnCartBuy1($cekNoPromo->no_promo,$idUser,$sku);
+				$priceOff = $this->model_penjualan->getProdukPrice($sku,$this->global['idStore']);
+				
+				$lowestPrice = $priceOn >= $priceOff ? $priceOff : $priceOn;
+					
+				$gdiskon = (floor(($qty+$cekBuy1Get3Qty)/$cekNoPromo->qty_diskon))*$lowestPrice;
+			}else{
+				$gdiskon = (floor(($qty+$cekBuy1Get3Qty)/$cekNoPromo->qty_diskon))*$cekNoPromo->discount;
+			}
+
+			if($gdiskon>0) $qty_get = $cekNoPromo->free_item;
+			
+
+				$cekBuy1Get3Exists = $this->model_penjualan->cekBuy1Get3Exists($cekNoPromo->no_promo,$idUser);
+				if(empty($cekBuy1Get3Exists)){
+					$dataBut1Get3 = array(
+								"idUser" => $idUser,
+								"no_promo" => $cekNoPromo->no_promo,
+								"diskon" => $gdiskon
+					);
+					$this->model_penjualan->insertBuy1Get3($dataBut1Get3);
+					
+				}else{
+					$dataBut1Get3 = array(
+								"diskon" => $gdiskon
+					);
+					$this->model_penjualan->updateBuy1Get3($cekNoPromo->no_promo,$idUser,$dataBut1Get3);
+				}
+				
+		}
+
+		$cekDiskonBrand = $this->diskonBrand($id_brand);
+
+		$nilaiDiskon = 0;
+		if($cekDiskonBrand){
+			if($cekDiskonBrand['tipe']=='percent') {
+				$nilaiDiskon = ($cekDiskonBrand['nilai']*$harga)*($qty-$qty_get);
+			}else $nilaiDiskon = 0;
+			
+			$cekDiskon = 0;
+		}else $cekDiskon = $this->cekDiskon($sku);
+
+		$disc_supplier = 0;
+		$disc_tebusmurah = 0;
+		if($cekDiskon == 1 || $nilaiDiskon==0){
+			$cekTebusMurah = $this->model_penjualan->cekTebusMurah($sku); //
+
+			if ($cekTebusMurah==$sku){
+				$nilai = $this->ambilNilaiDiskon($sku,($qty-$qty_get));
+				if (is_object($nilai)){
+					$nilaiDiskon = ($nilai->discount + $nilai->disc_supplier)*($qty-$qty_get);
+					$disc_supplier = $nilai->disc_supplier*($qty-$qty_get);
+				}else $nilaiDiskon = $nilai*($qty-$qty_get);
+								
+				//echo $nilaiDiskon;
+				if ($nilaiDiskon==0){
+					$nilaiDiskon = $this->diskonTebusMurah($sku,($qty-$qty_get));
+					$disc_tebusmurah = $nilaiDiskon;
+				}
+
+				// $nilaiDiskon = $this->diskonTebusMurah($sku,$qty);
+				// $disc_tebusmurah = $nilaiDiskon;
+				// //echo $nilaiDiskon;
+				// if ($nilaiDiskon==0){
+				// 	$nilai = $this->ambilNilaiDiskon($sku,$qty);
+				// 	if (is_object($nilai)){
+				// 		$nilaiDiskon = ($nilai->discount + $nilai->disc_supplier)*$qty;
+				// 		$disc_supplier = $nilai->disc_supplier*$qty;
+				// 	}else $nilaiDiskon = $nilai*$qty;
+				// }
+			}else{
+				$nilai = $this->ambilNilaiDiskon($sku,($qty-$qty_get));
+				if (is_object($nilai)){
+					$nilaiDiskon = ($nilai->discount + $nilai->disc_supplier)*($qty-$qty_get);
+					$disc_supplier = $nilai->disc_supplier*($qty-$qty_get);
+				}else $nilaiDiskon = $nilai*($qty-$qty_get);
+			}
+		} 
+
+		//cek if data exist on cart
+		$cekDataCart = $this->model_penjualan->cekCartIfExist($sku,$idUser);
+		//MAX STOK ON CART
+		//$maxQTY = $this->model_penjualan->cekStokPerStore($sku,$idStore);
+		$maxQTY = 1001;
+
+
+		$qtyCart 				= $this->model_penjualan->cekQtyCart($sku,$idUser);
+		$diskonBefore 			= $this->model_penjualan->cekDiskonBefore($sku,$idUser);
+		$diskonSupplierBefore 	= $this->model_penjualan->cekDiskonSupplierBefore($sku,$idUser)+0;
+		$tebusmurahBefore 		= $this->model_penjualan->tebusmurahBefore($sku,$idUser)+0;
+
+		if($cekDataCart > 0 ){
+
+			$qtyAdd = $qtyCart+1; 
+
+			if($qtyAdd > $maxQTY){
+				echo 1;
+			} else {
+				//delete first
+				$this->model_penjualan->hapusCart($sku,$idUser);
+				
+				$dataCart = array(
+							"id_produk"	=> $sku,
+							"quantity" 	=> $qtyCart + 1,
+							"id_user"	=> $idUser,
+							"harga"		=> $harga,
+							"hpp"		=> $hpp,
+							"diskon"	=> $diskonBefore+$nilaiDiskon,
+							"disc_supplier" => $diskonSupplierBefore+$disc_supplier,
+							"tebusmurah" => $tebusmurahBefore+$disc_tebusmurah
+						 );
+
+				$this->model_penjualan->insertCart($dataCart);
+				echo 1;
+			}
+
+		} else {
+			$dataCart = array(
+							"id_produk"	=> $sku,
+							"quantity" 	=> $qty,
+							"id_user"	=> $idUser,
+							"harga"		=> $harga,
+							"hpp"		=> $hpp,
+							"diskon"	=> $nilaiDiskon,
+							"disc_supplier" => $disc_supplier,
+							"tebusmurah" => $disc_tebusmurah
+						 );
+
+			$this->model_penjualan->insertCart($dataCart);
+			echo 2;
+		}
+	}
+
+	function insertCartPending(){
+		$sku 	 = $_POST['sku'];
+		$harga 	 = $_POST['harga'];
+		$qty 	 = $_POST['qty'];
+		$hpp 	 = $_POST['hpp'];
+
+		$idUser = $this->global['idUser'];
+		$idStore = $this->global['idStore'];
+
+		$noCart  = $_POST['noCart'];
+
+		// Buy 1 Get 3 
+		$cekNoPromo = $this->model_penjualan->cekBuy1Get3Promo($sku);
+		if(!empty($cekNoPromo->no_promo)){
+			$dataBut1Get3 = array(
+								"diskon" => 0
+			);
+			$this->model_penjualan->updateBuy1Get3Pending($cekNoPromo->no_promo,$noCart,$dataBut1Get3);
+			$cekBuy1Get3Qty = $this->model_penjualan->cekBuy1Get3QtyPending($cekNoPromo->no_promo,$noCart,$sku);
+				
+				$gdiskon = (floor(($qty+$cekBuy1Get3Qty)/$cekNoPromo->qty_diskon))*$cekNoPromo->discount;
+
+				$cekBuy1Get3Exists = $this->model_penjualan->cekBuy1Get3ExistsPending($cekNoPromo->no_promo,$noCart);
+				if(empty($cekBuy1Get3Exists)){
+					$dataBut1Get3 = array(
+								"noCart" => $noCart,
+								"no_promo" => $cekNoPromo->no_promo,
+								"diskon" => $gdiskon
+					);
+					$this->model_penjualan->insertBuy1Get3Pending($dataBut1Get3);
+				}else{
+					$dataBut1Get3 = array(
+								"diskon" => $gdiskon
+					);
+					$this->model_penjualan->updateBuy1Get3Pending($cekNoPromo->no_promo,$noCart,$dataBut1Get3);
+				}
+				
+		}
+
+		$cekDiskon = $this->cekDiskon($sku);
+
+		$disc_supplier = 0;
+		$disc_tebusmurah = 0;
+		if($cekDiskon == 1){
+			$cekTebusMurah = $this->model_penjualan->cekTebusMurah($sku); //
+
+			if ($cekTebusMurah==$sku){
+				$nilai = $this->ambilNilaiDiskon($sku,$qty);
+				
+				if (is_object($nilai)){
+					$nilaiDiskon = ($nilai->discount + $nilai->disc_supplier)*$qty;
+					$disc_supplier = $nilai->disc_supplier*$qty;
+				}else $nilaiDiskon = $nilai*$qty;
+				
+				
+				if ($nilaiDiskon==0){
+					$nilaiDiskon = $this->diskonTebusMurahTemp($sku,$qty,$noCart);
+					$disc_tebusmurah = $nilaiDiskon;
+				}
+				// $nilaiDiskon = $this->diskonTebusMurahTemp($sku,$qty,$noCart);
+				// $disc_tebusmurah = $nilaiDiskon;
+				// if ($nilaiDiskon==0){
+				// 	$nilai = $this->ambilNilaiDiskon($sku,$qty);
+				// 	if (is_object($nilai)){
+				// 		$nilaiDiskon = ($nilai->discount + $nilai->disc_supplier)*$qty;
+				// 		$disc_supplier = $nilai->disc_supplier*$qty;
+				// 	}else $nilaiDiskon = $nilai*$qty;
+				// }
+				//echo $nilaiDiskon;
+			}else{
+				$nilai = $this->ambilNilaiDiskon($sku,$qty);
+				if (is_object($nilai)){
+					$nilaiDiskon = ($nilai->discount + $nilai->disc_supplier)*$qty;
+					$disc_supplier = $nilai->disc_supplier*$qty;
+				}else $nilaiDiskon = $nilai*$qty;
+			}
+		} else {
+			$nilaiDiskon = 0;
+		}
+
+		//cek if data exist on cart
+		
+
+		$cekDataCart = $this->model_penjualan->cekCartIfExistPending($sku,$noCart);
+
+		if($cekDataCart > 0 ){
+			$qtyCart 		= $this->model_penjualan->cekQtyCartPending($sku,$noCart);
+			$diskonBefore 	= $this->model_penjualan->cekDiskonBeforePending($sku,$noCart);
+			$diskonSupplierBefore 	= $this->model_penjualan->cekDiskonSupplierBeforePending($sku,$noCart);
+
+			$dataCartUpdate = array(
+										"quantity"	=> $qtyCart + 1,
+										"diskon"	=> $diskonBefore+$nilaiDiskon,
+										"disc_supplier" => $diskonSupplierBefore+$disc_supplier
+								   );
+
+			$this->model_penjualan->updateCartPendingTemp($noCart,$sku,$dataCartUpdate);
+		} else {
+			$dataCart = array(
+							"id_produk"	=> $sku,
+							"quantity" 	=> $qty,
+							"noCart"	=> $noCart,
+							"harga"		=> $harga,
+							"hpp"		=> $hpp,
+							"diskon"	=> $nilaiDiskon,
+							"disc_supplier" => $disc_supplier
+						 );
+
+			$this->model_penjualan->insertCartPendingTemp($dataCart);
+		}
+	}
+
+	function diskonTebusMurah($sku,$qty){
+		$idUser = $this->global['idUser'];
+		$cekSales = $this->model_penjualan->cekSales($idUser,$sku)+0;
+		$cekQty = $qty;
+		//echo $cekSales;
+		$cekEligibility = $this->db->get_where("ap_produk_tebusmurah_rules",array("id_produk"=> $sku,
+										"id_toko"=> $this->global['idStore'],
+										"date_start <= '".date('Y-m-d')."'"));
+		
+		$countRulesIfExist = $cekEligibility->num_rows();
+		//echo $countRulesIfExist;
+		if($countRulesIfExist > 0){	
+			foreach($cekEligibility->result() as $row){
+				$kelipatan = floor($cekSales / $row->nominal_belanja);
+				$maksimum = $kelipatan*$row->max_qty;
+				if($row->nominal_belanja <= $cekSales && strtotime(date('Y-m-d')) >= strtotime($row->date_start) && strtotime(date('Y-m-d')) <= strtotime($row->date_end)){
+					$terjual = $this->model_penjualan->cekQuotaDiskon($sku,$row->date_start,$row->date_end);
+					if ($row->quota>0 and $terjual<$row->quota){
+						if($row->setHari==1){
+							$HariID = explode(".",$row->HariID);
+							if (in_array(date('w'),$HariID)){
+								if ($row->setJam==1){
+									if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+										$diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+									}else $diskon = 0;
+								}else $diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+							}else $diskon = 0;
+						}else if ($row->setJam==1 && $row->setHari!=1){
+							if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+								$diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+							}else $diskon = 0;
+						}else $diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+					}else if ($row->quota==0){
+						if($row->setHari==1){
+							$HariID = explode(".",$row->HariID);
+							if (in_array(date('w'),$HariID)){
+								if ($row->setJam==1){
+									if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+										$diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+									}else $diskon = 0;
+								}else $diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+							}else $diskon = 0;
+						}else if ($row->setJam==1 && $row->setHari!=1){
+							if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+								$diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+							}else $diskon = 0;
+						}else $diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+					}else $diskon=0;
+				} else {
+					$diskon = 0;
+				} 
+			}
+			return $diskon; 
+
+		} else {
+			return 0;
+		}
+	}
+	function diskonTebusMurahTemp($sku,$qty,$noCart){
+		$idUser = $this->global['idUser'];
+		$cekSales = $this->model_penjualan->cekSalesTemp($noCart,$sku)+0;
+		$cekQty = $qty;
+		//echo $cekSales;
+		$cekEligibility = $this->db->get_where("ap_produk_tebusmurah_rules",array("id_produk"=> $sku,
+										"id_toko"=> $this->global['idStore'],
+										"date_start <= '".date('Y-m-d')."'"));
+		
+		$countRulesIfExist = $cekEligibility->num_rows();
+		//echo $countRulesIfExist;
+		if($countRulesIfExist > 0){	
+			foreach($cekEligibility->result() as $row){
+				$kelipatan = floor($cekSales / $row->nominal_belanja);
+				$maksimum = $kelipatan*$row->max_qty;
+				if($row->nominal_belanja <= $cekSales && strtotime(date('Y-m-d')) >= strtotime($row->date_start) && strtotime(date('Y-m-d')) <= strtotime($row->date_end)){
+					$terjual = $this->model_penjualan->cekQuotaDiskon($sku,$row->date_start,$row->date_end);
+					if ($row->quota>0 and $terjual<$row->quota){
+						if($row->setHari==1){
+							$HariID = explode(".",$row->HariID);
+							if (in_array(date('w'),$HariID)){
+								if ($row->setJam==1){
+									if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+										$diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+									}else $diskon = 0;
+								}else $diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+							}else $diskon = 0;
+						}else if ($row->setJam==1 && $row->setHari!=1){
+							if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+								$diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+							}else $diskon = 0;
+						}else $diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+					}else if ($row->quota==0){
+						if($row->setHari==1){
+							$HariID = explode(".",$row->HariID);
+							if (in_array(date('w'),$HariID)){
+								if ($row->setJam==1){
+									if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+										$diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+									}else $diskon = 0;
+								}else $diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+							}else $diskon = 0;
+						}else if ($row->setJam==1 && $row->setHari!=1){
+							if(strtotime(date('H:i:s')) >= strtotime($row->JamMulai) && strtotime(date('H:i:s')) <= strtotime($row->JamSelesai)){
+								$diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+							}else $diskon = 0;
+						}else $diskon = ($cekQty > $maksimum)? $maksimum*$row->discount:$cekQty*$row->discount;
+					}else $diskon=0;
+				} else {
+					$diskon = 0;
+				} 
+			}
+			return $diskon; 
+
+		} else {
+			return 0;
+		}
+	}
+
+	function viewCart(){
+		$idUser = $this->global['idUser'];	
+		$idMember = $this->model_penjualan->getIdMemberDiskon($idUser);
+		$id = $idMember;
+		$data['kategori_member'] 	  = $this->model_penjualan->cekKategoriMember($id);
+		$data['dataCart'] = $this->model_penjualan->dataCart($idUser,$this->global['idStore']);
+		$data['idUser'] = $idUser;
+		$this->load->view("penjualan/viewCart",$data);
+	}
+
+	function currentQTYPeritem(){
+		$id = $_POST['id'];
+		$qty = $this->model_penjualan->currentQtyPeritem($id);
+		echo $qty;
+	}
+
+	function viewCartPending(){
+		$idpending = $_POST['noCart'];	
+		$data['dataCart'] = $this->model_penjualan->dataCartPending($idpending);
+		$data['idpending'] = $idpending;
+		$idMember = $this->model_penjualan->getIdMemberDiskonPending($idpending);
+		$id = $idMember;
+		$data['kategori_member'] 	  = $this->model_penjualan->cekKategoriMember($id);
+		$data['idUser'] = $this->global['idUser'];
+		$this->load->view("penjualan/viewCartPending",$data);
+	}
+
+	function verifyApproval(){
+		$user 	= $_POST['user'];
+		$password = $_POST['pw'];
+		$ip = $_SERVER['REMOTE_ADDR'];
+		$setuju = $this->model_penjualan->verifyApproval($user,$password);
+		$this->model_penjualan->deleteApprover($ip);
+		echo json_encode($setuju);
+	}
+	function verifyApprovalPass(){
+		$user 	= $_POST['user'];
+		$password = $_POST['pw'];
+		$ip = $_SERVER['REMOTE_ADDR'];
+		$setuju = $this->model_penjualan->verifyApprovalPass($user,$password);
+		//$this->model_penjualan->deleteApprover($ip);
+		echo json_encode($setuju);
+	}
+
+	function updateDiskon(){
+		$sku 	= $_POST['idProduk'];
+		$diskon = $_POST['diskon'];
+		$idUser = $this->global['idUser'];
+
+		$ifPercent = strripos($diskon,"%");
+		$totalPurchase = $this->model_penjualan->totalByRow($idUser,$sku);
+
+		//jika terdapat tanda persen maka konversi ke nilai persen
+		if($ifPercent > 0){
+			$intDiskon = str_replace('%','',$diskon);
+			$diskon    = ($intDiskon/100)*$totalPurchase;
+
+			$dataUpdate = array(
+									"diskon"	=> $diskon
+							   );
+
+			$this->model_penjualan->updateDiskon($sku,$idUser,$dataUpdate);
+		} else {
+			if ($diskon<10){
+				$diskon    = ($diskon/100)*$totalPurchase;
+			}
+			$dataUpdate = array(
+									"diskon"	=> $diskon
+							   );
+
+			$this->model_penjualan->updateDiskon($sku,$idUser,$dataUpdate);
+		}
+
+		//harga on cart
+		$id = $_POST['id'];
+		$dataProduk = $this->model_penjualan->hargaOnCart($id);
+		
+		foreach($dataProduk as $row){
+			$arrayData[] = array(
+									"harga"		=> $row->harga,
+									"diskon"	=> $row->diskon,
+									"qty"		=> $row->qty
+								);
+		}
+
+		echo json_encode($arrayData);
+	}
+
+	function updateQtyCart(){
+		//error_reporting(0);ini_set('display_errors',0);
+		$sku 	  	= $_POST['idProduk'];
+		$qty 	  	= $_POST['qty'];
+		$idUser   	= $this->global['idUser'];
+		$harga 		= $this->model_penjualan->cekHarga($sku,$idUser);	
+		$id_brand 	= $this->model_penjualan->cekIdBrand($sku);
+
+		$qty_get = 0;
+
+		// Buy 1 Get 3 
+		$cekNoPromo = $this->model_penjualan->cekBuy1Get3Promo($sku);
+		if(!empty($cekNoPromo->no_promo)){
+			$dataBut1Get3 = array(
+								"diskon" => 0
+			);
+			$this->model_penjualan->updateBuy1Get3($cekNoPromo->no_promo,$idUser,$dataBut1Get3);
+			$cekBuy1Get3Qty = $this->model_penjualan->cekBuy1Get3Qty($cekNoPromo->no_promo,$idUser,$sku);
+
+			if($cekNoPromo->tipe=='lowest'){
+				$priceOn = $this->model_penjualan->cekPriceOnCartBuy1($cekNoPromo->no_promo,$idUser,$sku);
+				$priceOff = $this->model_penjualan->getProdukPrice($sku,$this->global['idStore']);
+				
+				$lowestPrice = $priceOn >= $priceOff ? $priceOff : $priceOn;
+					
+				$gdiskon = (floor(($qty+$cekBuy1Get3Qty)/$cekNoPromo->qty_diskon))*$lowestPrice;
+			}else{
+				$gdiskon = (floor(($qty+$cekBuy1Get3Qty)/$cekNoPromo->qty_diskon))*$cekNoPromo->discount;
+			}
+
+			if($gdiskon>0) $qty_get = $cekNoPromo->free_item;
+
+				$cekBuy1Get3Exists = $this->model_penjualan->cekBuy1Get3Exists($cekNoPromo->no_promo,$idUser);
+				if(empty($cekBuy1Get3Exists)){
+					$dataBut1Get3 = array(
+								"idUser" => $idUser,
+								"no_promo" => $cekNoPromo->no_promo,
+								"diskon" => $gdiskon
+					);
+					$this->model_penjualan->insertBuy1Get3($dataBut1Get3);
+				}else{
+					$dataBut1Get3 = array(
+								"diskon" => $gdiskon
+					);
+					$this->model_penjualan->updateBuy1Get3($cekNoPromo->no_promo,$idUser,$dataBut1Get3);
+				}
+				
+		}
+
+		//cek diskon
+		$cekDiskonBrand = $this->diskonBrand($id_brand);
+		$nilaiDiskon = 0;
+		if($cekDiskonBrand){
+			if($cekDiskonBrand['tipe']=='percent') {
+				$nilaiDiskon = ($cekDiskonBrand['nilai']*$harga)*($qty-$qty_get);
+			}else $nilaiDiskon = 0;
+			$cekDiskon = 0;
+		}else $cekDiskon = $this->cekDiskon($sku);
+
+		$disc_supplier = 0;
+		$disc_tebusmurah = 0;
+		if($cekDiskon == 1 && $nilaiDiskon==0){
+			$cekTebusMurah = $this->model_penjualan->cekTebusMurah($sku); //
+
+			if ($cekTebusMurah==$sku){
+				$nilaiDiskon = $this->diskonTebusMurah($sku,($qty-$qty_get));
+				$disc_tebusmurah = $nilaiDiskon;
+				if ($nilaiDiskon==0){
+					$nilai = $this->ambilNilaiDiskon($sku,($qty-$qty_get));
+					if (is_object($nilai)){
+						$nilaiDiskon = ($nilai->discount + $nilai->disc_supplier)*($qty-$qty_get);
+						$disc_supplier = $nilai->disc_supplier*($qty-$qty_get);
+					}else $nilaiDiskon = $nilai*($qty-$qty_get);
+				}
+				//echo $nilaiDiskon;
+			}else{
+				$nilai = $this->ambilNilaiDiskon($sku,($qty-$qty_get));
+				if (is_object($nilai)){
+					$nilaiDiskon = ($nilai->discount + $nilai->disc_supplier)*($qty-$qty_get);
+					$disc_supplier = $nilai->disc_supplier*($qty-$qty_get);
+				}else $nilaiDiskon = $nilai*($qty-$qty_get);
+			}
+		} 
+
+		if ($disc_tebusmurah>0){
+			$dataUpdate = array(
+								"quantity"	=> $qty,
+								"diskon"	=> $nilaiDiskon,
+								"tebusmurah" => $disc_tebusmurah
+						   );
+		}else{
+			$dataUpdate = array(
+								"diskon"	=> $nilaiDiskon,
+								"quantity"	=> $qty,
+								"disc_supplier" => $disc_supplier
+						   );
+		}
+		
+
+		$this->model_penjualan->updateQtyCart($sku,$idUser,$dataUpdate);
+		
+		//harga on cart
+		$id = $_POST['id'];
+		$dataProduk = $this->model_penjualan->hargaOnCart($id);
+		
+		foreach($dataProduk as $row){
+			$arrayData[] = array(
+									"harga"		=> $row->harga,
+									"diskon"	=> $row->diskon
+								);
+		}
+
+		echo json_encode($arrayData);
+	}
+
+	function updateQtyCartPending(){
+		$sku 	  = $_POST['idProduk'];
+		$qty 	  = $_POST['qty'];
+		$noCart   = $_POST['noCart'];
+
+		// Buy 1 Get 3 
+		$cekNoPromo = $this->model_penjualan->cekBuy1Get3Promo($sku);
+		if(!empty($cekNoPromo->no_promo)){
+			$dataBut1Get3 = array(
+								"diskon" => 0
+			);
+			$this->model_penjualan->updateBuy1Get3Pending($cekNoPromo->no_promo,$noCart,$dataBut1Get3);
+			$cekBuy1Get3Qty = $this->model_penjualan->cekBuy1Get3QtyPending($cekNoPromo->no_promo,$noCart,$sku);
+				
+				$gdiskon = (floor(($qty+$cekBuy1Get3Qty)/$cekNoPromo->qty_diskon))*$cekNoPromo->discount;
+
+				$cekBuy1Get3Exists = $this->model_penjualan->cekBuy1Get3ExistsPending($cekNoPromo->no_promo,$noCart);
+				if(empty($cekBuy1Get3Exists)){
+					$dataBut1Get3 = array(
+								"noCart" => $noCart,
+								"no_promo" => $cekNoPromo->no_promo,
+								"diskon" => $gdiskon
+					);
+					$this->model_penjualan->insertBuy1Get3Pending($dataBut1Get3);
+				}else{
+					$dataBut1Get3 = array(
+								"diskon" => $gdiskon
+					);
+					$this->model_penjualan->updateBuy1Get3Pending($cekNoPromo->no_promo,$noCart,$dataBut1Get3);
+				}
+				
+		}
+
+		//cek diskon
+		$cekDiskon = $this->cekDiskon($sku);
+
+		$disc_supplier = 0;
+		$disc_tebusmurah = 0;
+		if($cekDiskon == 1){
+			$cekTebusMurah = $this->model_penjualan->cekTebusMurah($sku); //
+
+			if ($cekTebusMurah==$sku){
+				$nilaiDiskon = $this->diskonTebusMurahTemp($sku,$qty,$noCart);
+				$disc_tebusmurah = $nilaiDiskon;
+				if ($nilaiDiskon==0){
+					$nilai = $this->ambilNilaiDiskon($sku,$qty);
+					if (is_object($nilai)){
+						$nilaiDiskon = ($nilai->discount + $nilai->disc_supplier)*$qty;
+						$disc_supplier = $nilai->disc_supplier*$qty;
+					}else $nilaiDiskon = $nilai*$qty;
+				}
+			}else{
+				$nilai = $this->ambilNilaiDiskon($sku,$qty);
+				if (is_object($nilai)){
+					$nilaiDiskon = ($nilai->discount + $nilai->disc_supplier)*$qty;
+					$disc_supplier = $nilai->disc_supplier*$qty;
+				}else $nilaiDiskon = $nilai*$qty;
+			}
+		} else {
+			$nilaiDiskon = 0;
+		}	
+		if ($disc_tebusmurah>0){
+			$dataUpdate = array(
+								"quantity"	=> $qty,
+								"diskon"	=> $nilaiDiskon,
+								"tebusmurah" => $disc_tebusmurah
+						   );
+		}else{
+			$dataUpdate = array(
+								"diskon"	=> $nilaiDiskon,
+								"quantity"	=> $qty,
+								"disc_supplier" => $disc_supplier
+						   );
+		}
+
+		$this->model_penjualan->updateQtyCartPending($sku,$noCart,$dataUpdate);
+
+		//harga on cart
+		$id = $_POST['id'];
+		$dataProduk = $this->model_penjualan->hargaOnCartTemp($id);
+		
+		foreach($dataProduk as $row){
+			$arrayData[] = array(
+									"harga"		=> $row->harga,
+									"diskon"	=> $row->diskon
+								);
+		}
+
+		echo json_encode($arrayData);
+
+	}
+
+	function insertDiskonPending(){
+		$diskon 	= $_POST['diskon'];
+		$noCart 	= $_POST['noCart'];
+
+		//cek diskon
+		$cekIfDiskonExist = $this->model_penjualan->cekIfDiskonExistPending($noCart);
+
+		if($cekIfDiskonExist > 0){
+			$dataUpdate = array(
+									"diskon"		=> $diskon
+							   );
+
+			$this->model_penjualan->updateDiskonPending($noCart,$dataUpdate);
+		} else {
+			$dataInsert = array(
+									"noCart"		=> $noCart,
+									"diskon"		=> $diskon
+							   );
+
+			$this->model_penjualan->insertDiskonPending($dataInsert);
+		}
+	}
+
+	function insertDiskon(){
+		$diskon 	= $_POST['diskon'];
+		$idUser     = $this->global['idUser'];
+
+		//cek diskon
+		$cekIfDiskonExist = $this->model_penjualan->cekIfDiskonExist($idUser);
+		$totalPurchase = $this->model_penjualan->totalPurchase($idUser);
+		$diskonPeritem = $this->model_penjualan->diskonPeritemPanel($idUser);
+
+		$ifPercent = strripos($diskon,"%");
+
+		if($cekIfDiskonExist > 0){
+			$dataUpdate = array(
+									"diskon"		=> $diskon
+							   );
+
+			$this->model_penjualan->updateCartDiskon($idUser,$dataUpdate);
+		} else {
+			$dataInsert = array(
+									"idUser"		=> $idUser,
+									"diskon"		=> $diskon
+								);
+
+			$this->model_penjualan->insertCartDiskon($dataInsert);
+		}
+	}
+
+	
+
+	
+
+	function updateDiskonPending(){
+		$sku 	= $_POST['idProduk'];
+		$diskon = $_POST['diskon'];
+		$noCart = $_POST['noCart'];
+
+		$ifPercent = strripos($diskon,"%");
+		$totalPurchase = $this->model_penjualan->totalByRowTemp($noCart,$sku);
+
+		if($ifPercent > 0){
+			$intDiskon = str_replace('%','',$diskon);
+			$diskon    = ($intDiskon/100)*$totalPurchase;
+
+			$dataUpdate = array(
+									"diskon"	=> $diskon
+							   );
+
+			$this->model_penjualan->updateCartDiskonPending($sku,$noCart,$dataUpdate);
+		} else {
+			$dataUpdate = array(
+									"diskon"	=> $diskon
+							   );
+
+			$this->model_penjualan->updateCartDiskonPending($sku,$noCart,$dataUpdate);
+		}
+
+		//harga on cart
+		$id = $_POST['id'];
+		$dataProduk = $this->model_penjualan->hargaOnCartTemp($id);
+		
+		foreach($dataProduk as $row){
+			$arrayData[] = array(
+									"harga"		=> $row->harga,
+									"diskon"	=> $row->diskon,
+									"qty"		=> $row->qty
+								);
+		}
+
+		echo json_encode($arrayData);
+	}
+
+	function totalPurchase(){
+		$idUser = $this->global['idUser'];
+		$totalPurchase = $this->model_penjualan->totalPurchase($idUser);
+
+		echo number_format($totalPurchase,'0',',','.');
+	}
+
+	function totalPurchasePending(){
+		$idPending = $_POST['noCart'];
+		$totalPurchase = $this->model_penjualan->totalPurchasePending($idPending);
+
+		echo number_format($totalPurchase,'0',',','.');
+	}
+
+	function diskonPeritemPanel(){
+		$idUser = $this->global['idUser'];
+		$diskonPeritemPanel = $this->model_penjualan->diskonPeritemPanel($idUser);
+		$msg = '';
+		if($diskonPeritemPanel > 0){
+			$msg 	.= "<td colspan=2><i class='fa fa-bullhorn'></i> Diskon Peritem ";
+			$msg   .= "<b>".number_format($diskonPeritemPanel,'0',',','.')."</b>";
+		}
+		$diskonBuy1Get3 = $this->model_penjualan->diskonBuy1Get3($idUser);
+
+		if($diskonBuy1Get3 > 0){
+			
+			$msg 	.= "<br><i class='fa fa-bullhorn'></i> Diskon <i>Get Free Item</i> ";
+			$msg   .= "<b>".number_format($diskonBuy1Get3,'0',',','.')."</b></td>";
+		}else $msg .="</td>";
+		echo $msg;
+	}
+
+	function diskonPeritemPanelPending(){
+		$idPending = $_POST['noCart'];
+		$diskonPeritemPanel = $this->model_penjualan->diskonPeritemPanelPending($idPending);
+		$msg='';
+		if($diskonPeritemPanel > 0){
+			$msg 	= "<td><i class='fa fa-bullhorn'></i> Diskon Peritem</td>";
+			$msg   .= "<td align='right'>".number_format($diskonPeritemPanel,'0',',','.')."</td>";
+		}
+		
+		$diskonBuy1Get3 = $this->model_penjualan->diskonBuy1Get3Pending($idPending);
+
+		if($diskonBuy1Get3 > 0){
+			$msg .= "<td><i class='fa fa-bullhorn'></i> Diskon <i>Get Free Item</i></td>";
+			$msg .= "<td align='right'>".number_format($diskonBuy1Get3,'0',',','.')."</td>";
+		}
+		echo $msg;
+	}
+
+	function hapusCart(){
+		$idProduk = $_POST['idProduk'];
+		$idUser   = $this->global['idUser'];
+
+		$this->model_penjualan->hapusCart($idProduk,$idUser);
+	}
+
+	function hapusCartPending(){
+		$idProduk = $_POST['idProduk'];
+		$noCart   = $_POST['noCart'];
+
+		$this->model_penjualan->hapusCartPending($idProduk,$noCart);
+	}
+
+	function saveDiskonMember(){
+		$totalDiskon = $_POST['totalDiskon'];
+		$idUser   = $this->global['idUser'];
+		$idCustomer = $_POST['idCustomer'];
+
+		$dataDiskon = array(
+								"idUser" 	=> $idUser,
+								"idMember"	=> $idCustomer,
+								"diskon"	=> $totalDiskon
+						   );
+
+		$this->model_penjualan->saveDiskonMember($dataDiskon);
+	}
+
+	function saveDiskonMemberPending(){
+		$totalDiskon = $_POST['totalDiskon'];
+		$noCart   = $_POST['noCart'];
+		$idCustomer = $_POST['idCustomer'];
+
+		$cek = $this->model_penjualan->cekNoCartTempIfDuplicate($noCart);
+		if ($cek>0) $this->model_penjualan->deleteDiscMemberPending($noCart);
+		
+		$dataDiskon = array(
+								"noCart" 	=> $noCart,
+								"idMember"	=> $idCustomer,
+								"diskon"	=> $totalDiskon,
+								"poinReimburs" => 0,
+								"poinValue" => 0
+						   );
+
+		$this->model_penjualan->saveDiskonMemberPending($dataDiskon);
+	}
+
+	function diskonMemberDisplay(){
+		$idUser   		 = $this->global['idUser'];
+		$getDiskonMember = $this->model_penjualan->getDiskonMember($idUser);
+
+		if($getDiskonMember > 0){
+			$msg 	= "<td><i class='fa fa-money'></i> Diskon Member</td>";
+			$msg   .= "<td align='right'>".number_format($getDiskonMember,'0',',','.')."</td>";
+			
+			echo $msg;
+		}
+	}
+
+	function diskonMemberDisplayPending(){
+		$noCart 		 = $_POST['noCart'];
+		$getDiskonMember = $this->model_penjualan->getDiskonMemberPending($noCart);
+
+		if($getDiskonMember > 0){
+			$msg 	= "<td><i class='fa fa-money'></i> Diskon Member</td>";
+			$msg   .= "<td align='right'>".number_format($getDiskonMember,'0',',','.')."</td>";
+			
+			echo $msg;
+		}
+	}
+
+	function deleteDiscMember(){
+		$idUser = $_POST['idUser'];
+
+		$this->model_penjualan->deleteDiscMember($idUser);
+	}
+
+	function deleteDiscMemberPending(){
+		$noCart = $_POST['noCart'];
+
+		$this->model_penjualan->deleteDiscMemberPending($noCart);
+	}
+
+	function get_nilai_reimburs(){
+		$poin = $_POST['poin'];
+
+		$nilai_reimburs = $this->model1->nilai_reimburs();
+
+		foreach($nilai_reimburs->result() as $row){
+			$nilai_poin 			= $row->poin_pengeluaran;
+			$nilai_pengeluaran		= $row->nilai_pengeluaran;
+		}
+
+		$nominal_poin = ($poin/$nilai_poin)*$nilai_pengeluaran;
+
+		echo $nominal_poin;
+	}
+
+	function insertPoin(){
+		$poinVal 		= $_POST['poinVal'];
+		$nilaiReimburs 	= $_POST['nilaiReimburs'];
+		$idUser 		= $this->global['idUser'];
+
+		$dataUpdate 	= array(
+									"poinReimburs" 		=> $nilaiReimburs,
+									"poinValue"			=> $poinVal
+							   );
+
+		$this->model_penjualan->insertPoin($idUser,$dataUpdate);
+	}
+
+	function insertPoinPending(){
+		$poinVal 		= $_POST['poinVal'];
+		$nilaiReimburs 	= $_POST['nilaiReimburs'];
+		$noCart 		= $_POST['noCart'];
+
+		$dataUpdate 	= array(
+									"poinReimburs" 		=> $nilaiReimburs,
+									"poinValue"			=> $poinVal
+							   );
+
+		$this->model_penjualan->insertPoinPending($noCart,$dataUpdate);
+	}
+
+	function viewNilaiReimburs(){
+		$idUser = $this->global['idUser'];
+	
+		$poinReimburs = $this->model_penjualan->poinReimburs($idUser);
+		$poinValue 	  = $this->model_penjualan->poinValue($idUser);
+
+		if($poinReimburs > 0){
+
+			$msg 	= "<td><i class='fa fa-tree'></i> Poin Reimbursment</td>";
+			$msg   .= "<td  align='right'>".number_format($poinReimburs,'0',',','.')."</td>";
+
+			echo $msg;
+
+		}
+	}
+
+	function viewNilaiReimbursPending(){
+		$noCart  = $_POST['noCart'];
+	
+		$poinReimburs =  $this->model_penjualan->poinReimbursPending($noCart);
+		$poinValue 	  = $this->model_penjualan->poinValuePending($noCart);
+
+		if($poinReimburs > 0){
+
+			$msg 	= "<td><i class='fa fa-tree'></i> Poin Reimbursment</td>";
+			$msg   .= "<td  align='right'>".number_format($poinReimburs,'0',',','.')."</td>";
+
+			echo $msg;
+
+		}
+	}
+
+	function urlPoin(){
+		$idUser = $this->global['idUser'];
+	
+		$poinReimburs = $this->model_penjualan->poinReimburs($idUser);
+		$poinValue 	  = $this->model_penjualan->poinValue($idUser);
+
+		echo $poinValue;	
+	}
+
+	function insertOngkir(){
+		$ongkir 	= $_POST['ongkir'];
+		$idUser 	= $this->global['idUser'];
+
+		//cek ongkir exist
+		$cekIfOngkirExist = $this->model_penjualan->cekIfOngkirExist($idUser);
+
+		if($cekIfOngkirExist > 0){
+			$dataUpdate = array(
+									"ongkir"	=> $ongkir,
+							   );
+
+			$this->model_penjualan->updateOngkir($idUser,$dataUpdate);
+		} else {
+			$dataInsert = array(
+									"idUser"	=> $idUser,
+									"ongkir"	=> $ongkir
+							   );
+
+			$this->model_penjualan->insertOngkir($dataInsert);
+		}
+	}
+
+	function insertOngkirPending(){
+		$ongkir 	= $_POST['ongkir'];
+		$noCart 	= $_POST['noCart'];
+
+		//cek ongkir exist
+		$cekIfOngkirExist = $this->model_penjualan->cekIfOngkirExistPending($noCart);
+
+		if($cekIfOngkirExist > 0){
+			$dataUpdate = array(
+									"ongkir"	=> $ongkir,
+							   );
+
+			$this->model_penjualan->updateOngkirPending($noCart,$dataUpdate);
+		} else {
+			$dataInsert = array(
+									"noCart"	=> $noCart,
+									"ongkir"	=> $ongkir
+							   );
+
+			$this->model_penjualan->insertOngkirPending($dataInsert);
+		}
+	}
+
+	function viewOngkir(){
+		
+		$idUser = $this->global['idUser'];
+
+		$viewOngkir = $this->model_penjualan->viewOngkir($idUser);
+
+		if($viewOngkir > 0){
+			$msg = "<td><i class='fa fa-car'></i> Ongkir</td>";
+			$msg.= "<td align='right'>".number_format($viewOngkir,'0',',','.')."</td>";
+
+			echo $msg;
+		}
+		
+	}
+
+	function viewOngkirPending(){
+		$noCart = $_POST['noCart'];
+
+		$viewOngkir = $this->model_penjualan->viewOngkirPending($noCart);
+
+		if($viewOngkir > 0){
+			$msg = "<td><i class='fa fa-car'></i> Ongkir</td>";
+			$msg.= "<td align='right'>".number_format($viewOngkir,'0',',','.')."</td>";
+
+			echo $msg;
+		}
+	}
+
+	
+
+	function viewDiskon(){
+		$idUser = $this->global['idUser'];
+
+		$viewDiskon = $this->model_penjualan->viewDiskon($idUser);
+
+		if($viewDiskon > 0){
+			$msg = "<td><i class='fa fa-bullhorn'></i> Diskon Promosi</td>";
+			$msg.= "<td align='right'>".number_format($viewDiskon,'0',',','.')."</td>";
+
+			echo $msg;
+		}
+	}
+
+	function viewSurcharge(){
+		$idUser 		= $this->global['idUser'];
+		$_POST['type'] = (!isset($_POST['type']))? 0:$_POST['type'];
+		$type_bayar = $_POST['type'];
+
+		$subtotal 		= $this->model_penjualan->totalPurchase($idUser);
+		$diskonPeritem  = $this->model_penjualan->diskonPeritemPanel($idUser);
+		$diskonBuy1Get3  = $this->model_penjualan->diskonBuy1Get3($idUser);
+		$ongkir 		= $this->model_penjualan->viewOngkir($idUser);
+		$diskonMember   = $this->model_penjualan->getDiskonMember($idUser);
+		$diskonPromosi  = $this->model_penjualan->viewDiskon($idUser);
+		$poinReimburs   = $this->model_penjualan->poinReimburs($idUser);
+		$diskonVoucher   = $this->model_penjualan->diskonVoucher($idUser);
+		
+
+		$diskonVoucherFisik = $this->model_penjualan->diskonVoucherFisik($idUser);
+
+		$grandTotal     = ($subtotal+$ongkir)-($diskonPeritem+$diskonMember+$diskonPromosi+$poinReimburs+$diskonBuy1Get3+$diskonVoucher+$diskonVoucherFisik);
+		
+
+		//cek diskon
+		$cekIfSurchargeExist = $this->model_penjualan->cekIfSurchargeExist($idUser);
+
+		//$ifPercent = strripos($diskon,"%");
+
+		if ($type_bayar!='2' && $type_bayar!='3') { 
+			$surcharge = 0;
+			$this->model_penjualan->hapusSurcharge($idUser);
+		}else{
+			
+			$subAccount = isset($_POST['subAccount'])? $_POST['subAccount']:0;
+			$surchargeSet = $this->model_penjualan->viewSurchargeSet($subAccount,$type_bayar);
+			
+			
+			
+			$surcharge = $surchargeSet*$grandTotal;
+			
+			if($cekIfSurchargeExist > 0){
+				$dataUpdate = array(
+										"surcharge"		=> $surcharge
+								);
+
+				$this->model_penjualan->updateCartSurcharge($idUser,$dataUpdate);
+			} else {
+				$dataInsert = array(
+										"idUser"		=> $idUser,
+										"surcharge"		=> $surcharge
+									);
+
+				$this->model_penjualan->insertCartSurcharge($dataInsert);
+			}
+		}
+
+		
+
+		if($surcharge > 0){
+			$msg = "<td><i class='fa fa-credit-card'></i> Surcharge</td>";
+			$msg.= "<td align='right'>".number_format($surcharge,'0',',','.')."</td>";
+
+			echo $msg;
+		}else echo "";
+	}
+
+	function viewSurchargePending(){
+		$noCart = $_POST['noCart'];
+		$_POST['type'] = (!isset($_POST['type']))? 0:$_POST['type'];
+		$type_bayar = $_POST['type'];
+
+		$subtotal 		= $this->model_penjualan->totalPurchasePending($noCart);
+		$diskonPeritem  = $this->model_penjualan->diskonPeritemPanelPending($noCart);
+		$ongkir 		= $this->model_penjualan->viewOngkirPending($noCart);
+		$diskonMember   = $this->model_penjualan->getDiskonMemberPending($noCart);
+		$diskonPromosi  = $this->model_penjualan->viewDiskonPending($noCart);
+		$poinReimburs   = $this->model_penjualan->poinReimbursPending($noCart);
+
+		$diskonBuy1Get3   = $this->model_penjualan->diskonBuy1Get3Pending($noCart);
+
+		$grandTotal     = ($subtotal+$ongkir)-($diskonPeritem+$diskonMember+$diskonPromosi+$poinReimburs+$diskonBuy1Get3);
+		
+		
+
+
+		//cek diskon
+		$cekIfSurchargeExist = $this->model_penjualan->cekIfSurchargeExistPending($noCart);
+
+		//$ifPercent = strripos($diskon,"%");
+
+		if ($type_bayar!='3') { 
+			$surcharge = 0;
+			$this->model_penjualan->hapusSurchargePending($noCart);
+		}else{
+			$surcharge = 0.02*$grandTotal;
+			if($cekIfSurchargeExist > 0){
+				$dataUpdate = array(
+										"surcharge"		=> $surcharge
+								);
+
+				$this->model_penjualan->updateCartSurchargePending($noCart,$dataUpdate);
+			} else {
+				$dataInsert = array(
+										"noCart"		=> $noCart,
+										"surcharge"		=> $surcharge
+									);
+
+				$this->model_penjualan->insertCartSurchargePending($dataInsert);
+			}
+		}
+
+		
+
+		if($surcharge > 0 && $type_bayar==3){
+			$msg = "<td><i class='fa fa-credit-card'></i> Surcharge 2%</td>";
+			$msg.= "<td align='right'>".number_format($surcharge,'0',',','.')."</td>";
+
+			echo $msg;
+		}else echo "";
+	}
+
+	function viewDiskonPending(){
+		$noCart = $_POST['noCart'];
+
+		$viewDiskon = $this->model_penjualan->viewDiskonPending($noCart);
+
+		if($viewDiskon > 0){
+			$msg = "<td><i class='fa fa-bullhorn'></i> Diskon Promosi</td>";
+			$msg.= "<td align='right'>".number_format($viewDiskon,'0',',','.')."</td>";
+
+			echo $msg;
+		}
+	}
+
+	function viewVoucher(){
+		$idUser 		= $this->global['idUser'];
+
+		$subtotal 		= $this->model_penjualan->totalPurchase($idUser);
+		$diskonPeritem  = $this->model_penjualan->diskonPeritemPanel($idUser);
+		$diskonBuy1Get3  = $this->model_penjualan->diskonBuy1Get3($idUser);
+		$ongkir 		= $this->model_penjualan->viewOngkir($idUser);
+		$diskonMember   = $this->model_penjualan->getDiskonMember($idUser);
+		$diskonPromosi  = $this->model_penjualan->viewDiskon($idUser);
+		$poinReimburs   = $this->model_penjualan->poinReimburs($idUser);
+		
+
+		$grandTotal     = ($subtotal+$ongkir)-($diskonPeritem+$diskonMember+$diskonPromosi+$poinReimburs+$diskonBuy1Get3);
+
+		$id_customer	 = $this->model_penjualan->getIdMemberDiskon($idUser);
+
+		// hapus dulu cart voucher biar tidak bentrok
+		$this->model_penjualan->hapusCartVoucher($idUser);
+
+		$cekVoucher = $this->model_penjualan->cekVoucher($id_customer);
+		//var_dump($cekVoucher);
+
+		$diskonVoucher = 0;
+		foreach ($cekVoucher as $row) {
+			$simulasi = $grandTotal-$diskonVoucher-$row->nominal;
+			if($simulasi>=0){
+				$diskonVoucher += $row->nominal;
+				$data = array(
+								"idUser" => $idUser,
+								"no_promo" => $row->id_voucer_member,
+								"diskon" => $row->nominal
+							);
+				$this->model_penjualan->insertDiskonVoucher($data);
+			}
+			$data = '';
+			//var_dump($row);
+			//echo $row->nominal;
+		}
+		
+
+		if($diskonVoucher>0){
+			$msg = "<td><i class='fa fa-credit-card'></i> Voucher</td>";
+			$msg.= "<td align='right'>".number_format($diskonVoucher,'0',',','.')."</td>";
+
+			echo $msg;
+		}else echo "";
+	}
+
+	function viewGrandTotal(){
+		$idUser 		= $this->global['idUser'];
+
+		
+
+		$subtotal 		= $this->model_penjualan->totalPurchase($idUser);
+		$diskonPeritem  = $this->model_penjualan->diskonPeritemPanel($idUser);
+		$ongkir 		= $this->model_penjualan->viewOngkir($idUser);
+		$diskonMember   = $this->model_penjualan->getDiskonMember($idUser);
+		$diskonPromosi  = $this->model_penjualan->viewDiskon($idUser);
+		$surcharge  	= $this->model_penjualan->viewSurcharge($idUser);
+		$poinReimburs   = $this->model_penjualan->poinReimburs($idUser);
+
+		$diskonBuy1Get3   = $this->model_penjualan->diskonBuy1Get3($idUser);
+		$diskonVoucher   = $this->model_penjualan->diskonVoucher($idUser);
+		$diskonVoucherFisik   = $this->model_penjualan->diskonVoucherFisik($idUser);
+
+		$grandTotal     = ($subtotal+$ongkir)-($diskonPeritem+$diskonMember+$diskonPromosi+$poinReimburs+$diskonBuy1Get3+$diskonVoucher+$diskonVoucherFisik)+$surcharge;
+	
+		echo number_format($grandTotal,'0',',','.');
+	}
+
+	function totalKeseluruhan(){
+		$idUser 		= $this->global['idUser'];
+
+		$subtotal 		= $this->model_penjualan->totalPurchase($idUser);
+		$diskonPeritem  = $this->model_penjualan->diskonPeritemPanel($idUser);
+		$ongkir 		= $this->model_penjualan->viewOngkir($idUser);
+		$diskonMember   = $this->model_penjualan->getDiskonMember($idUser);
+		$diskonPromosi  = $this->model_penjualan->viewDiskon($idUser);
+		$poinReimburs   = $this->model_penjualan->poinReimburs($idUser);
+		$surcharge  	= $this->model_penjualan->viewSurcharge($idUser);
+
+		$diskonBuy1Get3   = $this->model_penjualan->diskonBuy1Get3($idUser);
+		$diskonVoucher   = $this->model_penjualan->diskonVoucher($idUser);
+
+		$diskonVoucherFisik   = $this->model_penjualan->diskonVoucherFisik($idUser);
+
+		$grandTotal     = ($subtotal+$ongkir)-($diskonPeritem+$diskonMember+$diskonPromosi+$poinReimburs+$diskonBuy1Get3+$diskonVoucher+$diskonVoucherFisik)+$surcharge;
+
+		echo $grandTotal;
+	}
+
+	function viewGrandTotalPending(){
+		$noCart  = $_POST['noCart'];
+
+		$subtotal 		= $this->model_penjualan->totalPurchasePending($noCart);
+		$diskonPeritem  = $this->model_penjualan->diskonPeritemPanelPending($noCart);
+		$ongkir 		= $this->model_penjualan->viewOngkirPending($noCart);
+		$diskonMember   = $this->model_penjualan->getDiskonMemberPending($noCart);
+		$diskonPromosi  = $this->model_penjualan->viewDiskonPending($noCart);
+		$poinReimburs   = $this->model_penjualan->poinReimbursPending($noCart);
+		$surcharge  	= $this->model_penjualan->viewSurchargePending($noCart);
+		$diskonBuy1Get3   = $this->model_penjualan->diskonBuy1Get3Pending($noCart);
+
+		$grandTotal     = ($subtotal+$ongkir)-($diskonPeritem+$diskonMember+$diskonPromosi+$poinReimburs+$diskonBuy1Get3)+$surcharge;
+
+		echo number_format($grandTotal,'0',',','.');
+	}
+
+	function penjualan_sql(){
+			
+			$idUser = $this->global['idUser'];
+
+			$poinReimburs 	= $this->model_penjualan->poinReimburs($idUser);
+			$poinValue 	  	= $this->model_penjualan->poinValue($idUser);
+
+			$id_customer	 = $this->model_penjualan->getIdMemberDiskon($idUser);
+			$kategori_member = $this->model_penjualan->cekKategoriMember($id_customer);
+			$ongkir 	 	 = $this->model_penjualan->viewOngkir($idUser) > 0 ? $this->model_penjualan->viewOngkir($idUser) : 0;
+			$type_bayar 	 = $this->input->post("type_bayar");
+			$keterangan 	 = $this->input->post("keterangan");
+			$seri_voucher 	= $this->input->post("seri_voucher");
+
+			if ($type_bayar==3 || $type_bayar==2){
+				$surcharge  	= $this->model_penjualan->viewSurcharge($idUser);
+			}else $surcharge = 0;
+
+			$alamat 		 = $this->input->post("alamatPenerima");
+			$provinsi 		 = $this->input->post("provinsi");
+			$kabupaten 		 = $this->input->post("kabupaten");
+			$kecamatan 		 = $this->input->post("kecamatan");
+			$ekspedisi 		 = $this->input->post("ekspedisi");
+			$namaPenerima 	 = $this->input->post("namaPenerima");
+			$noHPPenerima 	 = $this->input->post("noHPPenerima");
+
+
+			$total 			 = $this->model_penjualan->totalPurchase($idUser);
+			$hpp 			 = $this->model_penjualan->totalPurchaseHPP($idUser);
+			$diskon 		 = $this->model_penjualan->getDiskonMember($idUser); //diskon member
+			$diskon_promosi  = $this->model_penjualan->viewDiskon($idUser) > 0 ? $this->model_penjualan->viewDiskon($idUser) : 0;
+			/**$no_hp 			 = $this->input->post("no_hp");**/
+			$value_poin 	 = $this->model_penjualan->poinReimburs($idUser) > 0 ? $this->model_penjualan->poinReimburs($idUser) : 0;
+			$point_reimburs  = $this->model_penjualan->poinValue($idUser) > 0 ? $this->model_penjualan->poinValue($idUser) : 0 ;
+			$jumlah_bayar 	 = $this->input->post("jumlah_bayar");
+			$diskon_otomatis = $this->model_penjualan->diskonPeritemPanel($idUser);
+
+			$diskonBuy1Get3   = $this->model_penjualan->diskonBuy1Get3($idUser);
+			$diskonVoucher   = $this->model_penjualan->diskonVoucher($idUser);
+			$diskonVoucher = empty($diskonVoucher)? 0:$diskonVoucher;
+			$diskonVoucherFisik   = $this->model_penjualan->diskonVoucherFisik($idUser);
+			$diskonVoucher += empty($diskonVoucherFisik)? 0:$diskonVoucherFisik;
+			$diskon_promosi		= $diskon_promosi + $diskonBuy1Get3 + 0;
+
+			$tanggal 		= date('Y-m-d');
+			$id_user 		= $this->global['idUser'];
+
+			$count_invoice  = $this->model1->count_invoice($tanggal)+1; 
+
+			$no_inv 		= "INV".date('y').date('m').date('d').$id_user.sprintf('%04d',$count_invoice);
+
+			//DAPATKAN NILAI POIN
+			$poin_pembelian 	= $this->model1->poin_pembelian();
+			$nilai_pembelian	= $this->model1->nilai_pembelian();
+			$total_transaksi = $total-($diskon+$diskon_promosi+$value_poin+$diskon_otomatis);
+
+			$poin = floor(($total_transaksi/$nilai_pembelian)*$poin_pembelian);
+			
+			//UPDATE POIN CUSTOMER ALGORITHM
+
+			//dapatkan poin lama
+			$poin_lama = $this->model1->poin_lama($id_customer);
+			$ulang_tahun = $this->model1->ulang_tahun($id_customer);
+
+
+			//update poin customer setelah transaksi 
+			if($kategori_member!=2){
+				if ($ulang_tahun == date('m-d')){
+					$poin = $poin*2;
+					$data_poin = array(
+									"point" => $poin_lama+($poin)
+							); 
+				}else{
+					$data_poin = array(
+										"point" => $poin_lama+$poin
+								); 
+				}
+			}else{
+				$data_poin = array(
+									"point" => 0
+							);
+			}
+			
+			
+
+			$this->model_penjualan->updatePoinReimburs($id_customer,$data_poin);
+
+			if($this->input->post("sub_account")==null){
+				$sub_account = "";
+			} else {
+				$sub_account = $this->input->post("sub_account");
+			}
+
+			//kurangi poin jika nilai reimbursment lebih dari 0
+			if($point_reimburs > 0){
+				$old_poin = $this->model1->poin_lama($id_customer);
+
+				$kurang_poin = array(
+										"point" => $old_poin-$point_reimburs
+									);
+
+				$this->model_penjualan->updatePoinReimburs($id_customer,$kurang_poin);
+			}
+			// Bila ada voucher, update status voucher
+			if (!empty($seri_voucher)){
+				$data_voucher = array(
+										"terpakai" => 1
+									);
+
+				$this->model_penjualan->updateVoucherSeri($seri_voucher,$data_voucher);
+			}
+
+			$diskon = empty($diskon)? 0:$diskon;
+			$poin_lama = empty($poin_lama)? 0:$poin_lama;
+
+			$data_penjualan = array(
+										"no_invoice"		=> $no_inv,
+										"tipe_bayar"		=> $type_bayar,
+										"sub_account"		=> $sub_account,
+										"jatuh_tempo" 		=> $this->input->post("jatuh_tempo"),
+										"total"				=> $total,
+										"surcharge"			=> $surcharge,
+										"ongkir"			=> $ongkir,
+										"diskon"			=> $diskon+0,
+										"diskon_free"		=> $diskon_promosi,
+										"hpp"				=> $hpp,
+										"poin_value"		=> $value_poin,
+										"poin"				=> $poin,
+										"poin_before"		=> $poin_lama,
+										"poin_reimburs" 	=> $point_reimburs,
+										"diskon_otomatis"	=> $diskon_otomatis,
+										"seri_voucher"		=> $seri_voucher,
+										"voucher"			=> $diskonVoucher,
+										"jumlah_bayar"		=> $jumlah_bayar,
+										"id_pic"			=> $id_user,
+										"id_customer"		=> $id_customer,
+										"keterangan"		=> $keterangan, 
+										"tanggal"			=> date('Y-m-d H:i:s'),
+										"alamat"			=> $alamat,
+										"id_provinsi"		=> $provinsi,
+										"id_kabupaten"		=> $kabupaten,
+										"id_kecamatan"		=> $kecamatan,
+										"kontak_pengiriman" => $noHPPenerima,
+										"nama_penerima"		=> $namaPenerima,
+										"id_ekspedisi"		=> $ekspedisi,
+										"id_toko"			=> $this->global['idStore']
+								);
+
+			$this->model_penjualan->insertApInvoiceNumber($data_penjualan);
+
+			$affect = $this->db->affected_rows();
+
+			//var_dump($data_penjualan);echo $affect;
+
+			//cek tipe bayar, jika 1 = piutang dan sisipkan ke tabel piutag
+			if($type_bayar == 5){
+				$data_piutang = array(
+											"no_invoice" 	=> $no_inv,
+											"status" 		=> 0, //0 = TERBAYAR, 1 = LUNAS,
+											"jatuh_tempo"	=> $this->input->post("jatuh_tempo")
+										);
+
+				$this->db->insert("ap_piutang",$data_piutang);
+
+				//masukan dp 
+				$cek_piutang_payment = $this->model1->cek_piutang_payment()+1;
+
+				$no_seri = "TRX-".date('y').date('m').sprintf('%04d',$cek_piutang_payment);
+
+				$data_piutang = array(
+										"no_seri"			=> $no_seri,
+										"no_invoice" 		=> $no_inv,
+										"id_pic"			=> $this->global['idUser'],
+										"id_payment"		=> $type_bayar,
+										"account"			=> $sub_account,
+										"tanggal"			=> date('Y-m-d'),
+										"nominal"			=> $jumlah_bayar,
+										"keterangan"		=> $keterangan
+									);
+
+				$this->model_penjualan->insertPiutangInvoice($data_piutang);
+			}
+
+			// view cart
+			$viewCart = $this->model_penjualan->dataCart($idUser,$this->global['idStore']);
+
+			foreach($viewCart as $row){
+				$sku 			= $row->id_produk;
+				$harga 			= $row->harga;
+				$hpp 			= $row->hpp;
+				$qty 			= $row->qty;
+				$diskon_item 	= $row->diskon;
+				$disc_supplier 	= $row->disc_supplier;
+				$tebusmurah 	= $row->tebusmurah; 
+
+				$data_item[] = array(
+										"no_invoice" 	=> $no_inv,
+										"id_produk"	 	=> $sku,
+										"hpp"		 	=> $hpp,
+										"harga_jual" 	=> $harga,
+										"diskon"		=> $diskon_item,
+										"disc_supplier"	=> $disc_supplier,
+										"tebusmurah"	=> $tebusmurah,
+										"qty"			=> $qty,
+										"tanggal"		=> date('Y-m-d')
+									);
+
+				$id_store = $this->global['idStore'];
+				//kurangi stok di gudang utama
+				$stok_lama = $this->model1->get_stok_lama_produk_store($sku,$id_store);
+				$new_stok = $stok_lama-$qty;
+
+				//UPDATE STOK BARU
+				$data_update = array(
+										"stok" 			=> $new_stok
+									);
+
+				$this->model_penjualan->updateStokStore($sku,$id_store,$data_update);
+			}
+			// view cart
+			$dataVoucher = $this->model_penjualan->dataVoucher($idUser);
+
+			foreach($dataVoucher as $ro){
+				$no_promo = $ro->no_promo;
+				
+				$voucher_update = array(
+										"status" 		=> 'Out',
+										"tgl_out"	 	=> date('Y-m-d H:i:s'),
+										"id_pic"		=> $this->global['idUser'],
+										"id_toko" 		=> $this->global['idStore'],
+										"no_invoice"	=> $no_inv
+									);
+				$this->model_penjualan->updateVoucherMember($no_promo,$id_customer,$voucher_update);
+			}
+
+			$this->model_penjualan->insertBatch($data_item,$idUser);
+			$this->model_penjualan->hapusTrx($idUser);
+			echo $no_inv; 
+		
+		
+	}
+
+	function cancelTrx(){
+		$idUser = $this->global['idUser'];
+
+		$this->model_penjualan->hapusTrx($idUser);
+		redirect("penjualan");
+	}
+
+	function penjualanSqlPending(){
+		
+		$noCart = $_POST['noCart'];
+
+		$poinReimburs = $this->model_penjualan->poinReimbursPending($noCart);
+		$poinValue 	  = $this->model_penjualan->poinValuePending($noCart);
+
+		$id_customer	 = $this->model_penjualan->getIdMemberDiskonPending($noCart);
+		$kategori_member = $this->model_penjualan->cekKategoriMember($id_customer);
+		$ongkir 	 	 = $this->model_penjualan->viewOngkirPending($noCart) > 0 ? $this->model_penjualan->viewOngkirPending($noCart) : 0;
+		
+		$type_bayar 	 = $this->input->post("type_bayar");
+		$keterangan 	 = $this->input->post("keterangan");
+
+		$alamat 		 = $this->input->post("alamatPenerima");
+		$provinsi 		 = $this->input->post("provinsi");
+		$kabupaten 		 = $this->input->post("kabupaten");
+		$kecamatan 		 = $this->input->post("kecamatan");
+		$ekspedisi 		 = $this->input->post("ekspedisi");
+		$namaPenerima 	 = $this->input->post("namaPenerima");
+		$noHPPenerima 	 = $this->input->post("noHPPenerima");
+
+		$total 			 = $this->model_penjualan->totalPurchasePending($noCart);
+		$hpp 			 = $this->model_penjualan->totalPurchaseHPPPending($noCart);
+		$diskon 		 = $this->model_penjualan->getDiskonMemberPending($noCart); //diskon member
+		$diskon_promosi  = $this->model_penjualan->viewDiskonPending($noCart) > 0 ? $this->model_penjualan->viewDiskonPending($noCart) : 0;
+		$value_poin 	 = $this->model_penjualan->poinReimbursPending($noCart) > 0 ? $this->model_penjualan->poinReimbursPending($noCart) : 0;
+		$point_reimburs  = $this->model_penjualan->poinValuePending($noCart) > 0 ? $this->model_penjualan->poinValuePending($noCart) : 0 ;
+		$jumlah_bayar 	 = $this->input->post("jumlah_bayar");
+		$diskon_otomatis = $this->model_penjualan->diskonPeritemPanelPending($noCart);
+
+		$diskonBuy1Get3   	= $this->model_penjualan->diskonBuy1Get3Pending($noCart);
+		$diskon_promosi		= $diskon_promosi + $diskonBuy1Get3 + 0;
+
+		$tanggal 		= date('Y-m-d');
+		$id_user 		= $this->global['idUser'];
+
+		$count_invoice  = $this->model1->count_invoice($tanggal)+1; 
+
+		$no_inv 		= "INV".date('y').date('m').date('d').$id_user.sprintf('%04d',$count_invoice);
+
+		//DAPATKAN NILAI POIN
+		$poin_pembelian 	= $this->model1->poin_pembelian();
+		$nilai_pembelian	= $this->model1->nilai_pembelian();
+		$total_transaksi = $total-($diskon+$diskon_promosi+$value_poin);
+
+		$poin = floor(($total_transaksi/$nilai_pembelian)*$poin_pembelian);
+		
+		//UPDATE POIN CUSTOMER 
+
+		//dapatkan poin lama
+		$poin_lama = $this->model1->poin_lama($id_customer);
+		$ulang_tahun = $this->model1->ulang_tahun($id_customer);
+
+		//update poin customer setelah transaksi 
+		if($kategori_member!=2){
+			if ($ulang_tahun == date('Y-m-d')){
+				$data_poin = array(
+									"point" => $poin_lama+($poin*2)
+							); 
+			}else{
+				$data_poin = array(
+									"point" => $poin_lama+$poin
+							); 
+			}
+		}else{
+			$data_poin = array(
+								"point" => 0
+							);
+		}
+
+		$this->model_penjualan->updatePoinReimburs($id_customer,$data_poin);
+
+		//kurangi poin jika nilai reimbursment lebih dari 0
+		if($point_reimburs > 0){
+			$old_poin = $this->model1->poin_lama($id_customer);
+
+			$kurang_poin = array(
+									"point" => $old_poin-$point_reimburs
+								);
+
+			$this->model_penjualan->updatePoinReimburs($id_customer,$kurang_poin);
+		}
+
+		if($this->input->post("sub_account")==null){
+			$sub_account = "";
+		} else {
+			$sub_account = $this->input->post("sub_account");
+		}
+
+		$data_penjualan = array(
+									"no_invoice"		=> $no_inv,
+									"tipe_bayar"		=> $type_bayar,
+									"sub_account"		=> $sub_account,
+									"jatuh_tempo" 		=> $this->input->post("jatuh_tempo"),
+									"total"				=> $total,
+									"ongkir"			=> $ongkir,
+									"diskon"			=> $diskon+0,
+									"diskon_free"		=> $diskon_promosi,
+									"poin_value"		=> $value_poin,
+									"poin"				=> $poin,
+									"poin_before"		=> $poin_lama,
+									"hpp"				=> $hpp,
+									"poin_reimburs" 	=> $point_reimburs,
+									"diskon_otomatis"	=> $diskon_otomatis,
+									"jumlah_bayar"		=> $jumlah_bayar,
+									"id_pic"			=> $id_user,
+									"id_customer"		=> $id_customer,
+									"keterangan"		=> $keterangan, 
+									"tanggal"			=> date('Y-m-d H:i:s'),
+									"alamat"			=> $alamat,
+									"id_provinsi"		=> $provinsi,
+									"id_kabupaten"		=> $kabupaten,
+									"id_kecamatan"		=> $kecamatan,
+									"kontak_pengiriman" => $noHPPenerima,
+									"nama_penerima"		=> $namaPenerima,
+									"id_ekspedisi"		=> $ekspedisi,
+									"id_toko"			=> $this->global['idStore']
+							   );
+
+		$this->model_penjualan->insertApInvoiceNumber($data_penjualan);
+
+		$affect = $this->db->affected_rows();
+
+		//dapatkan tipe customer
+		$tipe_customer = $this->model1->tipe_customer($id_customer);
+
+	
+
+			//cek tipe bayar, jika 1 = piutang dan sisipkan ke tabel piutag
+
+			if($type_bayar == 5){
+				$data_piutang = array(
+										"no_invoice" 	=> $no_inv,
+										"status" 		=> 0, //0 = TERBAYAR, 1 = LUNAS,
+										"jatuh_tempo"	=> $this->input->post("jatuh_tempo")
+									 );
+				$this->model_penjualan->insertPiutangInvoice($data_piutang);
+			}
+
+			// view cart
+			$viewCart = $this->model_penjualan->dataCartPending($noCart);
+
+			foreach($viewCart as $row){
+				$sku 			= $row->id_produk;
+				$harga 			= $row->harga;
+				$hpp 			= $row->hpp;
+				$qty 			= $row->qty;
+				$diskon_item 	= $row->diskon;
+				$disc_supplier 	= $row->disc_supplier;
+				$tebusmurah 	= $row->tebusmurah;
+
+				$data_item[] = array(
+									"no_invoice" 	=> $no_inv,
+									"id_produk"	 	=> $sku,
+									"hpp"		 	=> $hpp,
+									"harga_jual" 	=> $harga,
+									"diskon"		=> $diskon_item,
+									"disc_supplier"	=> $disc_supplier,
+									"tebusmurah"	=> $tebusmurah,
+									"qty"			=> $qty,
+									"tanggal"		=> date('Y-m-d')
+								  );	
+
+				$id_store = $this->global['idStore'];
+
+				//kurangi stok di gudang utama
+				$stok_lama = $this->model1->get_stok_lama_produk_store($sku,$id_store);
+				$new_stok = $stok_lama-$qty;
+
+				//UPDATE STOK BARU
+				$data_update = array(
+										"stok" 			=> $new_stok
+									);
+
+				$this->model_penjualan->updateStokStore($sku,$id_store,$data_update);
+			}
+
+		
+		$this->model_penjualan->insertBatch($data_item);
+		$this->model_penjualan->hapusTrxTemp($noCart);
+
+		$dataCartTempNo = array(
+									"status" => 1
+							   );
+
+		$this->model_penjualan->updateCartTempStatus($noCart,$dataCartTempNo);
+ 		echo $no_inv;
+	}
+
+	function spinner(){
+		echo "<img src='".base_url('assets/loading.gif')."'/>";
+	}
+
+	function cekNoMemberIfDuplicate(){
+		$noMember 		= $_POST['noMember'];
+		$statement 		= $this->model_penjualan->cekNoMemberIfDuplicate($noMember);
+		
+		if($statement > 0){
+			echo 1;
+		} else {
+			echo 0;
+		}
+	}
+
+	function simpanMember(){
+		$noMember 		 	= $_POST['noMember'];
+		$cek = $this->model_penjualan->cekNoMemberIfDuplicate($noMember);
+		if ($cek>0){
+			echo 0;
+		
+		}else{
+			$namaCustomer 	 	= $_POST['namaCustomer'];
+			$kontak 		 	= $_POST['kontak'];
+			$email 			 	= $_POST['email'];
+			$tanggalLahir 	 	= $_POST['tanggalLahir'];
+			$kategoriCustomer 	= $_POST['kategoriCustomer'];
+			$diskonMember 		= $_POST['diskonMember'];
+			$alamat 			= $_POST['alamat'];
+			$provinsi 			= $_POST['provinsi'];
+			$kabupaten 			= $_POST['kabupaten'];
+			$kecamatan 			= $_POST['kecamatan'];
+
+			$dataCustomer = array(
+									"id_customer"		=> $noMember,
+									"nama"				=> $namaCustomer,
+									"kontak"			=> $kontak,
+									"email"				=> $email,
+									"tanggal_lahir"		=> $tanggalLahir,
+									"diskon"			=> $diskonMember,
+									"tanggal_gabung"	=> date('Y-m-d'),
+									"point"				=> 0,
+									"alamat"			=> $alamat,
+									"id_provinsi"		=> $provinsi,
+									"id_kabupaten"		=> $kabupaten,
+									"id_kecamatan"		=> $kecamatan,
+									"kategori"			=> $kategoriCustomer,
+									"no_kartu"		=> $noMember,
+								);
+
+			$simpan = $this->model_penjualan->simpanDataMember($dataCustomer);
+			echo $simpan;
+		}
+		
+	}
+
+	function viewAlamatCustomer(){
+		$idCustomer = $_POST['idCustomer'];
+		$data['provinsi'] = $this->db->get("ae_provinsi");
+		$data['ekspedisi'] = $this->db->get("ap_ekspedisi")->result();
+		$data['dataCustomer'] = $this->model_penjualan->customerRow($idCustomer);
+		$idUser = $this->global['idUser'];
+		$data['ongkir'] = $this->model_penjualan->viewOngkir($idUser);
+		$this->load->view("penjualan/viewAlamatCustomer",$data);
+	}
+	
+	function emptyAlamatCust(){
+		$data['provinsi'] = $this->db->get("ae_provinsi");
+		$data['ekspedisi'] = $this->db->get("ap_ekspedisi")->result();
+		$idUser = $this->global['idUser'];
+		$data['ongkir'] = $this->model_penjualan->viewOngkir($idUser);
+		$this->load->view("penjualan/alamatEmpty",$data);
+	}
+}
