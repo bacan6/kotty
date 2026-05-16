@@ -128,14 +128,483 @@ class Model_penjualan extends CI_Model
 	}
 	function cekVoucherFisik($seri_voucher)
 	{
-		$this->db->select(array("id_voucher", "nilai"));
+		$this->db->select(array(
+			"voucher_item.id_voucher",
+			"voucher_item.nilai",
+			"voucher_item.nilai_tipe",
+			"voucher_item.brand_ids",
+			"voucher_item.produk_ids",
+			"voucher_generate.minimal_belanja",
+		));
 		$this->db->from("voucher_item");
-		$this->db->where("id_voucher", $seri_voucher);
-		$this->db->where("terpakai", 0);
-		$this->db->where("'" . date('Y-m-d H:i:s') . "' between berlaku_mulai and berlaku_selesai");
+		$this->db->join("voucher_generate", "voucher_generate.id_generate = voucher_item.id_generate");
+		$this->db->where("voucher_item.id_voucher", $seri_voucher);
+		$this->db->where("voucher_item.terpakai", 0);
+		$this->db->where("'" . date('Y-m-d H:i:s') . "' between voucher_item.berlaku_mulai and voucher_item.berlaku_selesai");
 		return $this->db->get()->result();
-
 	}
+
+	/** Physical voucher row(s) by seri; used after checkout / on return (no terpakai/date filter). */
+	function getVoucherFisikRowsForRecalc($seri_voucher)
+	{
+		$seri_voucher = trim((string) $seri_voucher);
+		if ($seri_voucher === '' || (isset($seri_voucher[0]) && $seri_voucher[0] === '[')) {
+			return array();
+		}
+		$this->db->select(array(
+			"voucher_item.id_voucher",
+			"voucher_item.nilai",
+			"voucher_item.nilai_tipe",
+			"voucher_item.brand_ids",
+			"voucher_item.produk_ids",
+			"voucher_generate.minimal_belanja",
+		));
+		$this->db->from("voucher_item");
+		$this->db->join("voucher_generate", "voucher_generate.id_generate = voucher_item.id_generate");
+		$this->db->where("voucher_item.id_voucher", $seri_voucher);
+		return $this->db->get()->result();
+	}
+
+	/** Sum qty*harga_jual on invoice lines matching voucher brand/SKU scope (same rules as eligibleSubtotalVoucherFisik). */
+	function eligibleSubtotalVoucherFisikOnInvoice($no_invoice, $brand_ids_csv = null, $produk_ids_csv = null)
+	{
+		$brands = array();
+		if ($brand_ids_csv !== null && trim((string) $brand_ids_csv) !== '') {
+			$brands = array_values(array_filter(array_map('intval', explode(',', $brand_ids_csv))));
+		}
+		$produks = array();
+		if ($produk_ids_csv !== null && trim((string) $produk_ids_csv) !== '') {
+			foreach (explode(',', $produk_ids_csv) as $p) {
+				$p = trim((string) $p);
+				if ($p !== '') {
+					$produks[] = $p;
+				}
+			}
+		}
+
+		$this->db->select("COALESCE(SUM(ap_invoice_item.qty * ap_invoice_item.harga_jual), 0) AS eligible", false);
+		$this->db->from("ap_invoice_item");
+		$this->db->join("ap_produk", "ap_produk.id_produk = ap_invoice_item.id_produk");
+		$this->db->where("ap_invoice_item.no_invoice", $no_invoice);
+
+		if (count($brands) === 0 && count($produks) === 0) {
+			// all lines
+		} elseif (count($brands) > 0 && count($produks) === 0) {
+			$this->db->where_in("ap_produk.id_brand", $brands);
+		} elseif (count($brands) === 0 && count($produks) > 0) {
+			$this->db->where_in("ap_invoice_item.id_produk", $produks);
+		} else {
+			$this->db->where_in("ap_invoice_item.id_produk", $produks);
+			$this->db->where_in("ap_produk.id_brand", $brands);
+		}
+
+		$row = $this->db->get()->row();
+		return $row ? (float) $row->eligible : 0.0;
+	}
+
+	/**
+	 * Recompute physical voucher discount from ap_invoice_number + ap_invoice_item (same rules as viewVoucherFisik).
+	 * diskon_free on invoice already bundles promo + buy1get3 like penjualan_sql.
+	 */
+	function computePhysicalVoucherDiscountFromInvoiceState($no_invoice, $seri_voucher)
+	{
+		$rows = $this->getVoucherFisikRowsForRecalc($seri_voucher);
+		if (empty($rows)) {
+			return 0.0;
+		}
+
+		$this->db->select(array(
+			"ongkir",
+			"diskon",
+			"diskon_free",
+			"diskon_otomatis",
+			"poin_value",
+		));
+		$this->db->from("ap_invoice_number");
+		$this->db->where("no_invoice", $no_invoice);
+		$inv = $this->db->get()->row();
+		if (!$inv) {
+			return 0.0;
+		}
+
+		$this->db->select("COALESCE(SUM(ap_invoice_item.qty * ap_invoice_item.harga_jual), 0) AS subtotal", false);
+		$this->db->from("ap_invoice_item");
+		$this->db->where("ap_invoice_item.no_invoice", $no_invoice);
+		$rsub = $this->db->get()->row();
+		$subtotal = $rsub ? (float) $rsub->subtotal : 0.0;
+
+		$ongkir = floatval($inv->ongkir ?: 0);
+		$diskonPeritem = floatval($inv->diskon_otomatis ?: 0);
+		$diskonMember = floatval($inv->diskon ?: 0);
+		$diskonPromosi = floatval($inv->diskon_free ?: 0);
+		$poinReimburs = floatval($inv->poin_value ?: 0);
+
+		$grandTotal = ($subtotal + $ongkir) - ($diskonPeritem + $diskonMember + $diskonPromosi + $poinReimburs);
+		$grandTotalNoPerItem = ($subtotal + $ongkir) - ($diskonMember + $diskonPromosi + $poinReimburs);
+
+		$diskonVoucher = 0.0;
+		foreach ($rows as $row) {
+			$mb = (isset($row->minimal_belanja) && $row->minimal_belanja !== null && $row->minimal_belanja !== '') ? floatval($row->minimal_belanja) : 0;
+			if ($mb > 0 && $grandTotal < $mb) {
+				continue;
+			}
+
+			$tipe = (isset($row->nilai_tipe) && $row->nilai_tipe === 'percent') ? 'percent' : 'rp';
+			$bcsv = isset($row->brand_ids) ? $row->brand_ids : null;
+			$pcsv = isset($row->produk_ids) ? $row->produk_ids : null;
+			$hasScope = (trim((string) $bcsv) !== '' || trim((string) $pcsv) !== '');
+
+			$eligibleBase = $this->eligibleSubtotalVoucherFisikOnInvoice($no_invoice, $bcsv, $pcsv);
+			if ($hasScope && $eligibleBase <= 0) {
+				continue;
+			}
+
+			$nilaiNum = floatval($row->nilai);
+			if ($tipe === 'percent') {
+				$diskonAmount = floor($eligibleBase * $nilaiNum / 100);
+			} else {
+				$diskonAmount = min($nilaiNum, $eligibleBase);
+			}
+
+			if ($diskonAmount <= 0) {
+				continue;
+			}
+
+			$simulasi = $grandTotalNoPerItem - $diskonVoucher - $diskonAmount;
+			if ($simulasi < 0) {
+				continue;
+			}
+
+			$diskonVoucher += $diskonAmount;
+		}
+
+		return $diskonVoucher;
+	}
+
+	/** Sum qty*harga for cart lines matching voucher brand/SKU scope (gross). */
+	function eligibleSubtotalVoucherFisik($idUser, $brand_ids_csv = null, $produk_ids_csv = null)
+	{
+		$brands = array();
+		if ($brand_ids_csv !== null && trim((string) $brand_ids_csv) !== '') {
+			$brands = array_values(array_filter(array_map('intval', explode(',', $brand_ids_csv))));
+		}
+		$produks = array();
+		if ($produk_ids_csv !== null && trim((string) $produk_ids_csv) !== '') {
+			foreach (explode(',', $produk_ids_csv) as $p) {
+				$p = trim((string) $p);
+				if ($p !== '') {
+					$produks[] = $p;
+				}
+			}
+		}
+
+		$this->db->select("COALESCE(SUM(ap_cart.quantity * ap_cart.harga), 0) AS eligible", false);
+		$this->db->from("ap_cart");
+		$this->db->join("ap_produk", "ap_produk.id_produk = ap_cart.id_produk");
+		$this->db->where("ap_cart.id_user", $idUser);
+
+		if (count($brands) === 0 && count($produks) === 0) {
+			// all lines
+		} elseif (count($brands) > 0 && count($produks) === 0) {
+			$this->db->where_in("ap_produk.id_brand", $brands);
+		} elseif (count($brands) === 0 && count($produks) > 0) {
+			$this->db->where_in("ap_cart.id_produk", $produks);
+		} else {
+			$this->db->where_in("ap_cart.id_produk", $produks);
+			$this->db->where_in("ap_produk.id_brand", $brands);
+		}
+
+		$row = $this->db->get()->row();
+		return $row ? (float) $row->eligible : 0.0;
+	}
+
+	/** Zero ap_cart.diskon only on lines in voucher scope (same rules as eligibleSubtotalVoucherFisik); empty scope = all lines. */
+	function clearCartDiskonPeritemVoucherScope($idUser, $brand_ids_csv = null, $produk_ids_csv = null)
+	{
+		$brands = array();
+		if ($brand_ids_csv !== null && trim((string) $brand_ids_csv) !== '') {
+			$brands = array_values(array_filter(array_map('intval', explode(',', $brand_ids_csv))));
+		}
+		$produks = array();
+		if ($produk_ids_csv !== null && trim((string) $produk_ids_csv) !== '') {
+			foreach (explode(',', $produk_ids_csv) as $p) {
+				$p = trim((string) $p);
+				if ($p !== '') {
+					$produks[] = $p;
+				}
+			}
+		}
+
+		if (count($brands) === 0 && count($produks) === 0) {
+			$this->db->where("id_user", $idUser);
+			$this->db->update("ap_cart", array("diskon" => 0));
+			return;
+		}
+
+		$this->db->select("ap_cart.id");
+		$this->db->from("ap_cart");
+		$this->db->join("ap_produk", "ap_produk.id_produk = ap_cart.id_produk");
+		$this->db->where("ap_cart.id_user", $idUser);
+
+		if (count($brands) > 0 && count($produks) === 0) {
+			$this->db->where_in("ap_produk.id_brand", $brands);
+		} elseif (count($brands) === 0 && count($produks) > 0) {
+			$this->db->where_in("ap_cart.id_produk", $produks);
+		} else {
+			$this->db->where_in("ap_cart.id_produk", $produks);
+			$this->db->where_in("ap_produk.id_brand", $brands);
+		}
+
+		$rows = $this->db->get()->result();
+		if (empty($rows)) {
+			return;
+		}
+		$ids = array();
+		foreach ($rows as $r) {
+			$ids[] = $r->id;
+		}
+		$this->db->where_in("id", $ids);
+		$this->db->where("id_user", $idUser);
+		$this->db->update("ap_cart", array("diskon" => 0));
+	}
+
+	/** Active struk earn rules for store (voucher_generate.voucher_struk=1). */
+	function listVoucherStrukRulesActive($id_toko)
+	{
+		$now = date('Y-m-d H:i:s');
+		$this->db->from("voucher_generate");
+		$this->db->where("voucher_struk", 1);
+		$this->db->where("id_toko", (string) $id_toko);
+		$this->db->where("start_voucher_struk <=", $now);
+		$this->db->where("end_voucher_struk >=", $now);
+		return $this->db->get()->result();
+	}
+
+	/** Gross subtotal on invoice lines matching struk "dapat voucher" brand/SKU/subkategori/kategori scope (same rules as eligibleSubtotalVoucherFisik for brand/SKU). */
+	function invoiceStrukQualifyingSubtotal($no_invoice, $brand_ids_csv = null, $produk_ids_csv = null, $subkategori_ids_csv = null, $kategori_id_voucher_struk = null)
+	{
+		$brands = array();
+		if ($brand_ids_csv !== null && trim((string) $brand_ids_csv) !== '') {
+			$brands = array_values(array_filter(array_map('intval', explode(',', $brand_ids_csv))));
+		}
+		$produks = array();
+		if ($produk_ids_csv !== null && trim((string) $produk_ids_csv) !== '') {
+			foreach (explode(',', $produk_ids_csv) as $p) {
+				$p = trim((string) $p);
+				if ($p !== '') {
+					$produks[] = $p;
+				}
+			}
+		}
+		$subs = array();
+		if ($subkategori_ids_csv !== null && trim((string) $subkategori_ids_csv) !== '') {
+			$subs = array_values(array_filter(array_map('intval', explode(',', $subkategori_ids_csv))));
+		}
+		$has_sub = count($subs) > 0;
+		$kid = (int) $kategori_id_voucher_struk;
+		$has_kat = $kid > 0;
+
+		$this->db->select("COALESCE(SUM(ap_invoice_item.qty * ap_invoice_item.harga_jual), 0) AS eligible", false);
+		$this->db->from("ap_invoice_item");
+		$this->db->join("ap_produk", "ap_produk.id_produk = ap_invoice_item.id_produk");
+		$this->db->where("ap_invoice_item.no_invoice", $no_invoice);
+
+		if (count($brands) === 0 && count($produks) === 0) {
+			if ($has_sub) {
+				$this->db->where_in("ap_produk.id_subkategori", $subs);
+			}
+			if ($has_kat) {
+				$this->db->where("ap_produk.id_kategori", $kid);
+			}
+		} elseif (count($brands) > 0 && count($produks) === 0) {
+			$this->db->where_in("ap_produk.id_brand", $brands);
+			if ($has_sub) {
+				$this->db->where_in("ap_produk.id_subkategori", $subs);
+			}
+			if ($has_kat) {
+				$this->db->where("ap_produk.id_kategori", $kid);
+			}
+		} elseif (count($brands) === 0 && count($produks) > 0) {
+			$this->db->where_in("ap_invoice_item.id_produk", $produks);
+			if ($has_sub) {
+				$this->db->where_in("ap_produk.id_subkategori", $subs);
+			}
+			if ($has_kat) {
+				$this->db->where("ap_produk.id_kategori", $kid);
+			}
+		} else {
+			$this->db->where_in("ap_invoice_item.id_produk", $produks);
+			$this->db->where_in("ap_produk.id_brand", $brands);
+			if ($has_sub) {
+				$this->db->where_in("ap_produk.id_subkategori", $subs);
+			}
+			if ($has_kat) {
+				$this->db->where("ap_produk.id_kategori", $kid);
+			}
+		}
+
+		$row = $this->db->get()->row();
+		return $row ? (float) $row->eligible : 0.0;
+	}
+
+	function countVoucherItemByGenerate($id_generate)
+	{
+		$this->db->from("voucher_item");
+		$this->db->where("id_generate", $id_generate);
+		return (int) $this->db->count_all_results();
+	}
+
+	function strukVoucherAlreadyIssuedForInvoice($no_invoice, $id_generate)
+	{
+		$this->db->from("voucher_item");
+		$this->db->where("issued_no_invoice", $no_invoice);
+		$this->db->where("id_generate", $id_generate);
+		return $this->db->count_all_results() > 0;
+	}
+
+	function voucherItemIdExists($id_voucher)
+	{
+		$this->db->from("voucher_item");
+		$this->db->where("id_voucher", $id_voucher);
+		return $this->db->count_all_results() > 0;
+	}
+
+	/** Insert struk voucher_item when invoice qualifies; idempotent per (no_invoice, id_generate). */
+	function issueVoucherStrukForInvoice($no_invoice, $id_toko)
+	{
+		$rules = $this->listVoucherStrukRulesActive($id_toko);
+		if (empty($rules)) {
+			return;
+		}
+
+		$huruf = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+		foreach ($rules as $rule) {
+			$id_gen = $rule->id_generate;
+			if ($this->strukVoucherAlreadyIssuedForInvoice($no_invoice, $id_gen)) {
+				continue;
+			}
+
+			$bget = isset($rule->brand_ids_voucher_struk) ? $rule->brand_ids_voucher_struk : null;
+			$pget = isset($rule->produk_ids_voucher_struk) ? $rule->produk_ids_voucher_struk : null;
+			$sget = isset($rule->subkategori_ids_voucher_struk) ? $rule->subkategori_ids_voucher_struk : null;
+			$kget = isset($rule->kategori_id_voucher_struk) ? $rule->kategori_id_voucher_struk : null;
+			$qual = $this->invoiceStrukQualifyingSubtotal($no_invoice, $bget, $pget, $sget, $kget);
+			$scopeGet = (trim((string) $bget) !== '' || trim((string) $pget) !== '' || trim((string) $sget) !== '' || (int) $kget > 0);
+			if ($scopeGet && $qual <= 0) {
+				continue;
+			}
+
+			$min_get = (isset($rule->min_get_voucher_struk) && $rule->min_get_voucher_struk !== null && $rule->min_get_voucher_struk !== '')
+				? (float) $rule->min_get_voucher_struk : 0.0;
+			if ($min_get > 0 && $qual < $min_get) {
+				continue;
+			}
+
+			$jml = isset($rule->jml_voucher) ? (int) $rule->jml_voucher : 0;
+			if ($jml > 0 && $this->countVoucherItemByGenerate($id_gen) >= $jml) {
+				continue;
+			}
+
+			$kode = '';
+			for ($t = 0; $t < 25; $t++) {
+				$cand = substr(str_shuffle($huruf), 0, 8);
+				if (!$this->voucherItemIdExists($cand)) {
+					$kode = $cand;
+					break;
+				}
+			}
+			if ($kode === '') {
+				continue;
+			}
+
+			$data_item = array(
+				"id_voucher" => $kode,
+				"id_generate" => $id_gen,
+				"berlaku_mulai" => $rule->berlaku_mulai,
+				"berlaku_selesai" => $rule->berlaku_selesai,
+				"nilai" => $rule->nilai,
+				"nilai_tipe" => isset($rule->nilai_tipe) && $rule->nilai_tipe === 'percent' ? 'percent' : 'rp',
+				"brand_ids" => (isset($rule->brand_ids) && trim((string) $rule->brand_ids) !== '') ? $rule->brand_ids : null,
+				"produk_ids" => (isset($rule->produk_ids) && trim((string) $rule->produk_ids) !== '') ? $rule->produk_ids : null,
+				"terpakai" => 0,
+				"issued_no_invoice" => $no_invoice,
+			);
+
+			$this->db->insert("voucher_item", $data_item);
+		}
+	}
+
+	function getVoucherStrukReceiptForInvoice($no_invoice)
+	{
+		$this->db->select("voucher_item.*, voucher_generate.nm_voucher, voucher_generate.minimal_belanja");
+		$this->db->from("voucher_item");
+		$this->db->join("voucher_generate", "voucher_generate.id_generate = voucher_item.id_generate");
+		$this->db->where("voucher_item.issued_no_invoice", $no_invoice);
+		$this->db->order_by("voucher_item.id_voucher", "ASC");
+		return $this->db->get()->result();
+	}
+
+	/** Short human text for receipt (Indonesian). */
+	function voucherStrukReceiptDescription($row)
+	{
+		$lines = array();
+		$tipe = (isset($row->nilai_tipe) && $row->nilai_tipe === 'percent') ? 'percent' : 'rp';
+		$nilai = isset($row->nilai) ? (float) $row->nilai : 0;
+		if ($tipe === 'percent') {
+			$lines[] = 'Diskon ' . (floor($nilai) == $nilai ? (string) (int) $nilai : number_format($nilai, 2, ',', '')) . '%';
+		} else {
+			$lines[] = 'Diskon Rp ' . number_format($nilai, 0, ',', '.');
+		}
+
+		$scope = array();
+		if (isset($row->brand_ids) && trim((string) $row->brand_ids) !== '') {
+			$ids = array_filter(array_map('intval', explode(',', $row->brand_ids)));
+			if (!empty($ids)) {
+				$this->db->select("brand");
+				$this->db->from("brand");
+				$this->db->where_in("id_brand", $ids);
+				$bn = array();
+				foreach ($this->db->get()->result() as $b) {
+					$bn[] = $b->brand;
+				}
+				if (!empty($bn)) {
+					$scope[] = 'Brand: ' . implode(', ', $bn);
+				}
+			}
+		}
+		if (isset($row->produk_ids) && trim((string) $row->produk_ids) !== '') {
+			$ids = array();
+			foreach (explode(',', $row->produk_ids) as $p) {
+				$p = trim((string) $p);
+				if ($p !== '') {
+					$ids[] = $p;
+				}
+			}
+			if (!empty($ids)) {
+				$this->db->select("id_produk, nama_produk");
+				$this->db->from("ap_produk");
+				$this->db->where_in("id_produk", $ids);
+				$this->db->limit(12);
+				$pn = array();
+				foreach ($this->db->get()->result() as $p) {
+					$pn[] = $p->id_produk . ' ' . $p->nama_produk;
+				}
+				if (!empty($pn)) {
+					$scope[] = 'SKU: ' . implode('; ', $pn);
+				}
+			}
+		}
+		if (!empty($scope)) {
+			$lines[] = implode(' | ', $scope);
+		}
+
+		if (isset($row->berlaku_selesai) && $row->berlaku_selesai) {
+			$lines[] = 'Berlaku s/d ' . date('d-m-Y H:i', strtotime($row->berlaku_selesai));
+		}
+
+		return implode("\n", $lines);
+	}
+
 	function diskonVoucherFisik($idUser)
 	{
 		$this->db->select("SUM(diskon) as diskon");

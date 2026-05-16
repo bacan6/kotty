@@ -150,16 +150,16 @@ Class ModelProduk extends CI_Model{
 		return $this->db->query($query);
 	}
 	function dataStokToko($length,$start,$search,$id){
-		$query = "SELECT ap_produk.id_produk,ap_produk.nama_produk,stok_store.stok as stok,ap_kategori.kategori,ap_kategori_1.kategori_level_1,ap_kategori_2.kategori_3,ap_produk.hpp as harga_beli, ap_stand.stand
-				  FROM stok_store
-				  LEFT JOIN ap_produk ON ap_produk.id_produk = stok_store.id_produk
+		$query = "SELECT ap_produk.id_produk,ap_produk.nama_produk,SUM(stok_store_kartu.qty) as stok,ap_kategori.kategori,ap_kategori_1.kategori_level_1,ap_kategori_2.kategori_3,ap_produk.hpp as harga_beli, ap_stand.stand
+				  FROM stok_store_kartu
+				  LEFT JOIN ap_produk ON ap_produk.id_produk = stok_store_kartu.id_produk
 				  LEFT outer JOIN ap_kategori ON ap_kategori.id_kategori = ap_produk.id_kategori
 				  LEFT outer JOIN ap_kategori_1 ON ap_kategori_1.id = ap_produk.id_subkategori
 				  LEFT outer JOIN ap_kategori_2 ON ap_kategori_2.id = ap_produk.id_subkategori_2
 				  LEFT outer JOIN ap_stand ON ap_stand.id_stand = ap_produk.tempat
-				  WHERE stok_store.id_store = '$id' AND (ap_produk.qr_code LIKE '$search%' OR ap_produk.nama_produk LIKE '%$search%' OR ap_produk.id_produk LIKE '%$search%')
+				  WHERE stok_store_kartu.id_store = '$id' AND (ap_produk.qr_code LIKE '$search%' OR ap_produk.nama_produk LIKE '%$search%' OR ap_produk.id_produk LIKE '%$search%')
 				  and ap_produk.status=1
-				  GROUP BY stok_store.id_produk
+				  GROUP BY stok_store_kartu.id_produk
 				  LIMIT $start,$length";
 		return $this->db->query($query);
 	}

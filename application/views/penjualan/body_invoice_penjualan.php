@@ -194,6 +194,20 @@ h5,table,td,th{font-family:'Courier New';}
                         <tr style="">
                             <td colspan="4" align="center"><img src="<?php echo base_url('barcode.php?h=50&f=png&s=code-128&d='.$_GET['no_invoice']); ?>"></center></td>
                         </tr>
+                        <?php if (!empty($voucher_struk_receipt)) { foreach ($voucher_struk_receipt as $vs) { ?>
+                        <tr>
+                            <td colspan="4" align="center" style="border-top:dashed 1px #000;padding-top:8px;">
+                                Selamat! Anda mendapatkan voucher berikut:<br/>
+                                <small><strong><?php echo htmlspecialchars((string) $vs['nm_voucher'], ENT_QUOTES, 'UTF-8'); ?></strong></small><br/>
+                                <?php if (!empty($vs['minimal_belanja']) && (float) $vs['minimal_belanja'] > 0) { ?>
+                                <small>Minimum belanja untuk pakai voucher: Rp <?php echo number_format((float) $vs['minimal_belanja'], 0, ',', '.'); ?></small><br/>
+                                <?php } ?>
+                                <small style="white-space:pre-wrap;"><?php echo nl2br(htmlspecialchars((string) $vs['desc'], ENT_QUOTES, 'UTF-8')); ?></small><br/>
+                                <span style="font-family:monospace;font-size:11px;"><?php echo htmlspecialchars((string) $vs['id_voucher'], ENT_QUOTES, 'UTF-8'); ?></span><br/>
+                                <img src="<?php echo base_url('barcode.php?h=48&f=png&s=code-128&d=' . rawurlencode((string) $vs['id_voucher'])); ?>" alt=""/>
+                            </td>
+                        </tr>
+                        <?php } } ?>
                     </table>
                 </div>
             </div>

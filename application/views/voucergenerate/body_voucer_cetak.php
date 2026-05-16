@@ -89,8 +89,18 @@
                         </div>
                         <div class="v-foot">
                             <div class="v-harga">
-                                <span class="v-harga-span">Rp <?php echo number_format($v->nilai,0,',','.'); ?></span>
-                                <span class="v-berlaku">Berlaku sampai <?php echo date('d-m-Y',strtotime($v->berlaku_selesai))?></span>
+                                <?php
+                                $is_pct = isset($v->nilai_tipe) && $v->nilai_tipe === 'percent';
+                                $nilai_num = floatval(str_replace(',', '.', preg_replace('/[^\d.,\-]/', '', (string)$v->nilai)));
+                                if ($is_pct) {
+                                    $pct_disp = ($nilai_num == floor($nilai_num)) ? (string)(int)$nilai_num : rtrim(rtrim(number_format($nilai_num, 2, '.', ''), '0'), '.');
+                                    $nilai_label = $pct_disp.'%';
+                                } else {
+                                    $nilai_label = 'Rp '.number_format($nilai_num, 0, ',', '.');
+                                }
+                                ?>
+                                <span class="v-harga-span"><?php echo htmlspecialchars($nilai_label); ?></span>
+                                <span class="v-berlaku"><br>Berlaku sampai <?php echo date('d-m-Y',strtotime($v->berlaku_selesai))?></span>
                             </div>
                             <div class="v-bar">
                                 <img src="<?php echo base_url('barcode.php?h=60&f=png&s=code-128&d='.$v->id_voucher); ?>" style="width: 180px;position: relative;right: -65px;bottom: 10px;">

@@ -19,7 +19,7 @@
    		<td style="text-align: center;"><?php echo $i; ?></td>
    		<td><?php echo $row->id_voucher; ?></td>
       <td><?php echo date("d F Y H:i",strtotime($row->berlaku_mulai)); ?> - <?php echo date("d F Y H:i",strtotime($row->berlaku_selesai)); ?></td>
-      <td><?php echo number_format($row->nilai); ?></td>
+      <td><?php echo (isset($row->nilai_tipe) && $row->nilai_tipe === 'percent') ? htmlspecialchars($row->nilai).'%' : number_format($row->nilai); ?></td>
    		
    	</tr>
    	<?php $i++; } ?>

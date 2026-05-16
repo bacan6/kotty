@@ -184,49 +184,76 @@ class Penjualan extends BaseController
 		$idUser = $this->global['idUser'];
 		$seri_voucher = $_POST['seri_voucher'];
 
-		$subtotal = $this->model_penjualan->totalPurchase($idUser);
-		$diskonPeritem = $this->model_penjualan->diskonPeritemPanel($idUser);
-		$diskonBuy1Get3 = $this->model_penjualan->diskonBuy1Get3($idUser);
-		$ongkir = $this->model_penjualan->viewOngkir($idUser);
-		$diskonMember = $this->model_penjualan->getDiskonMember($idUser);
-		$diskonPromosi = $this->model_penjualan->viewDiskon($idUser);
-		$poinReimburs = $this->model_penjualan->poinReimburs($idUser);
-
+		$subtotal = floatval($this->model_penjualan->totalPurchase($idUser) ?: 0);
+		$diskonPeritem = floatval($this->model_penjualan->diskonPeritemPanel($idUser) ?: 0);
+		$diskonBuy1Get3 = floatval($this->model_penjualan->diskonBuy1Get3($idUser) ?: 0);
+		$ongkir = floatval($this->model_penjualan->viewOngkir($idUser) ?: 0);
+		$diskonMember = floatval($this->model_penjualan->getDiskonMember($idUser) ?: 0);
+		$diskonPromosi = floatval($this->model_penjualan->viewDiskon($idUser) ?: 0);
+		$poinReimburs = floatval($this->model_penjualan->poinReimburs($idUser) ?: 0);
 
 		$grandTotal = ($subtotal + $ongkir) - ($diskonPeritem + $diskonMember + $diskonPromosi + $poinReimburs + $diskonBuy1Get3);
+		$grandTotalNoPerItem = ($subtotal + $ongkir) - ($diskonMember + $diskonPromosi + $poinReimburs + $diskonBuy1Get3);
 
 		// hapus dulu cart voucher biar tidak bentrok
 		$this->model_penjualan->hapusCartVoucherFisik($idUser);
 
 		$cekVoucher = $this->model_penjualan->cekVoucherFisik($seri_voucher);
-		//var_dump($cekVoucher);
 
 		$diskonVoucher = 0;
 		foreach ($cekVoucher as $row) {
-			$simulasi = $grandTotal - $diskonVoucher - $row->nilai;
-			if ($simulasi >= 0) {
-
-				$diskonVoucher += $row->nilai;
-				$data = array(
-					"idUser" => $idUser,
-					"seri_voucher" => $row->id_voucher,
-					"diskon" => $row->nilai
-				);
-				$this->model_penjualan->insertVoucherFisik($data);
+			$mb = (isset($row->minimal_belanja) && $row->minimal_belanja !== null && $row->minimal_belanja !== '') ? floatval($row->minimal_belanja) : 0;
+			if ($mb > 0 && $grandTotal < $mb) {
+				continue;
 			}
-			$data = '';
-			//var_dump($row);
-			//echo $row->nominal;
-		}
 
+			$tipe = (isset($row->nilai_tipe) && $row->nilai_tipe === 'percent') ? 'percent' : 'rp';
+			$bcsv = isset($row->brand_ids) ? $row->brand_ids : null;
+			$pcsv = isset($row->produk_ids) ? $row->produk_ids : null;
+			$hasScope = (trim((string) $bcsv) !== '' || trim((string) $pcsv) !== '');
+
+			$eligibleBase = $this->model_penjualan->eligibleSubtotalVoucherFisik($idUser, $bcsv, $pcsv);
+			if ($hasScope && $eligibleBase <= 0) {
+				continue;
+			}
+
+			$nilaiNum = floatval($row->nilai);
+			if ($tipe === 'percent') {
+				$diskonAmount = floor($eligibleBase * $nilaiNum / 100);
+			} else {
+				$diskonAmount = min($nilaiNum, $eligibleBase);
+			}
+
+			if ($diskonAmount <= 0) {
+				continue;
+			}
+
+			$simulasi = $grandTotalNoPerItem - $diskonVoucher - $diskonAmount;
+			if ($simulasi < 0) {
+				continue;
+			}
+
+			if ($tipe === 'percent') {
+				$this->model_penjualan->clearCartDiskonPeritemVoucherScope($idUser, $bcsv, $pcsv);
+			}
+
+			$diskonVoucher += $diskonAmount;
+			$data = array(
+				"idUser" => $idUser,
+				"seri_voucher" => $row->id_voucher,
+				"diskon" => $diskonAmount
+			);
+			$this->model_penjualan->insertVoucherFisik($data);
+		}
 
 		if ($diskonVoucher > 0) {
 			$msg = "<td><i class='fa fa-credit-card'></i> F.Voucher</td>";
 			$msg .= "<td align='right'>" . number_format($diskonVoucher, '0', ',', '.') . "</td>";
 
 			echo $msg;
-		} else
+		} else {
 			echo "";
+		}
 	}
 
 	function invoice_setorankasir()
@@ -426,6 +453,15 @@ class Penjualan extends BaseController
 		$no_invoice = $_POST['noInvoice'];
 		$tanggal = date('Y-m-d');
 
+		$invHdr = $this->db->get_where("ap_invoice_number", array("no_invoice" => $no_invoice))->row();
+		$physVoucherBefore = 0.0;
+		if ($invHdr && !empty(trim((string) $invHdr->seri_voucher))) {
+			$sv0 = trim((string) $invHdr->seri_voucher);
+			if ($sv0 !== '' && $sv0[0] !== '[') {
+				$physVoucherBefore = (float) $this->model_penjualan->computePhysicalVoucherDiscountFromInvoiceState($no_invoice, $sv0);
+			}
+		}
+
 		$anti_dobel = $this->model1->count_retur_dobel($no_invoice);
 
 		if ($anti_dobel > 0)
@@ -530,6 +566,17 @@ class Penjualan extends BaseController
 			$this->db->insert_batch("ap_retur_item", $data_item);
 			$this->model_penjualan->insertReturPenjualanSQL($data_retur);
 			$this->model1->insertKartuStok($data_kartu);
+
+			$invAfter = $this->db->get_where("ap_invoice_number", array("no_invoice" => $no_invoice))->row();
+			$physVoucherAfter = 0.0;
+			if ($invAfter && !empty(trim((string) $invAfter->seri_voucher))) {
+				$sv1 = trim((string) $invAfter->seri_voucher);
+				if ($sv1 !== '' && $sv1[0] !== '[') {
+					$physVoucherAfter = (float) $this->model_penjualan->computePhysicalVoucherDiscountFromInvoiceState($no_invoice, $sv1);
+				}
+			}
+			$voucherBaru = max(0.0, (float) ($invAfter->voucher ?? 0) - $physVoucherBefore + $physVoucherAfter);
+			$this->model_penjualan->updateInvoiceNumberRetur($no_invoice, array("voucher" => $voucherBaru));
 		}
 
 	}
@@ -649,6 +696,18 @@ class Penjualan extends BaseController
 		$data['tipe_bayar'] = $this->model1->tipe_bayar_struk($no_invoice);
 
 		$data['tipe_kustomer'] = $this->model1->tipe_kustomer($no_invoice);
+
+		$vraw = $this->model_penjualan->getVoucherStrukReceiptForInvoice($no_invoice);
+		$data['voucher_struk_receipt'] = array();
+		foreach ($vraw as $vr) {
+			$mb = (isset($vr->minimal_belanja) && $vr->minimal_belanja !== null && $vr->minimal_belanja !== '') ? (float) $vr->minimal_belanja : 0.0;
+			$data['voucher_struk_receipt'][] = array(
+				'id_voucher' => $vr->id_voucher,
+				'nm_voucher' => $vr->nm_voucher,
+				'desc' => $this->model_penjualan->voucherStrukReceiptDescription($vr),
+				'minimal_belanja' => $mb,
+			);
+		}
 
 		$this->load->library('ciqrcode');
 
@@ -3153,7 +3212,7 @@ class Penjualan extends BaseController
 		}
 
 		// UPDATE resi online
-		if ($this->global['idStore'] == 6 || $this->global['idStore'] == 5) {
+		if ($this->global['idStore'] == 6 || $this->global['idStore'] == 5 || $this->global['idUser'] == 57) {
 			$update_resi = array(
 				"status" => '1',
 				"tanggal_invoice" => date('Y-m-d H:i:s'),
@@ -3165,6 +3224,7 @@ class Penjualan extends BaseController
 		}
 
 		$this->model_penjualan->insertBatch($data_item, $idUser);
+		$this->model_penjualan->issueVoucherStrukForInvoice($no_inv, $this->global['idStore']);
 		$this->model1->insertKartuStok($data_kartu);
 		$this->model_penjualan->hapusTrx($idUser);
 		echo $no_inv;

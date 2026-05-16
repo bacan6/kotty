@@ -16,7 +16,7 @@
             	</div>
 
             	<div class="row">
-            		<div class="col-md-12 table-responsive" id="data-voucer-item">
+            		<div class="col-md-12 table-responsive" id="data-voucer-item" data-load-url="<?php echo base_url('Voucergenerate/data_voucer_item/'.$id); ?>">
             			
             		</div>
             	</div>               

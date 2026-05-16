@@ -3,6 +3,7 @@
   <thead>
     <tr style="font-weight: bold;">
         <td width="5%" style="text-align: center;">No</td>
+        <td>Jenis</td>
         <td>Voucher</td>
         <td>Nama Voucer</td>
         <td>Tgl Berlaku</td>
@@ -20,10 +21,17 @@
    	?>
    	<tr>
    		<td style="text-align: center;"><?php echo $i; ?></td>
-      <td><a href="<?php echo base_url('Voucergenerate/show_voucer/'); ?><?php echo $row->id_generate; ?>" class="btn btn-success">Lihat Voucher</a></td>
+      <td><?php echo (isset($row->voucher_struk) && (int)$row->voucher_struk === 1)
+        ? '<span class="label label-warning">Struk</span>'
+        : '<span class="label label-info">Cetak</span>'; ?></td>
+      <td><?php if (isset($row->voucher_struk) && (int)$row->voucher_struk === 1) { ?>
+        <span class="text-muted">—</span>
+      <?php } else { ?>
+      <a href="<?php echo base_url('Voucergenerate/show_voucer/'); ?><?php echo $row->id_generate; ?>" class="btn btn-success btn-xs">Lihat Voucher</a>
+      <?php } ?></td>
    		<td><?php echo $row->nm_voucher; ?></td>
       <td><?php echo date("d F Y H:i",strtotime($row->berlaku_mulai)); ?> - <?php echo date("d F Y H:i",strtotime($row->berlaku_selesai)); ?></td>
-      <td><?php echo number_format($row->nilai); ?></td>
+      <td><?php echo (isset($row->nilai_tipe) && $row->nilai_tipe === 'percent') ? htmlspecialchars($row->nilai).'%' : number_format($row->nilai); ?></td>
       <td><?php echo $row->jml_voucher; ?></td>
    		<td>
         <a href="#edit-voucer-modal" data-toggle="modal" class="edit_voucer" id="<?php echo $row->id_generate; ?>"><i class="fa fa-pencil"></i></a> |
@@ -63,22 +71,23 @@
     id = this.id;
 
     url = "<?php echo base_url('Voucergenerate/hapus_voucer'); ?>";
-    voucer    = "<?php echo base_url('Voucergenerate/data_voucer'); ?>";
 
     swal({
-      title: "Are you sure?",
-      text: "You will not be able to recover this imaginary file!",
+      title: "Hapus batch voucher?",
+      text: "Seluruh data batch ini akan dihapus dan tidak dapat dikembalikan.",
       type: "warning",
       showCancelButton: true,
       confirmButtonColor: "#DD6B55",
-      confirmButtonText: "Yes, delete it!",
+      confirmButtonText: "Ya, hapus",
+      cancelButtonText: "Batal",
       closeOnConfirm: false
     },
     function(){
       $.post(url,{id : id}, function(){
-        $('#data-voucer').load(voucer);
+        var u = (typeof window.getVoucherListUrl === 'function') ? window.getVoucherListUrl() : "<?php echo base_url('Voucergenerate/data_voucer'); ?>";
+        $('#data-voucer').load(u);
       });
-      swal("Deleted!", "Your imaginary file has been deleted.", "success");
+      swal("Terhapus", "Data voucher telah dihapus.", "success");
     });
   });
 </script>
