@@ -999,15 +999,10 @@ class Laporan extends BaseController{
  		$subkategori 	= $_GET['subkategori'];
  		$subkategori2 	= $_GET['subkategori2'];
         $id_supplier 	= $_GET['id_supplier'];
-		$id_brand_string = $this->input->get('id_brand'); // Mengambil string "1,5,8"
-
+		$id_brand_string = $this->input->get('id_brand');
+		$id_brand = '';
 		if (!empty($id_brand_string)) {
-			// Ubah string kembali menjadi array: ['1', '5', '8']
-			$id_brand = explode(',', $id_brand_string); 
-
-			// Terapkan WHERE IN
-			// Biasanya Anda akan memanggil Model di sini:
-			// $this->db->where_in('id_brand', $id_brand_array);
+			$id_brand = explode(',', $id_brand_string);
 		}
 
 		$objPHPExcel = new PHPExcel();

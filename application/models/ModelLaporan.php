@@ -78,8 +78,13 @@ Class ModelLaporan extends CI_Model{
         if(!empty($id_supplier)){
 			//$this->db->where("ap_produk.id_supplier",$id_supplier);
 		}
-		if(!empty($id_brand)){
-			$this->db->where("ap_produk.id_brand",$id_brand);
+		if (!empty($id_brand) && is_array($id_brand)) {
+			$brands_to_filter = array_filter($id_brand);
+			if (!empty($brands_to_filter)) {
+				$this->db->where_in('ap_produk.id_brand', $brands_to_filter);
+			}
+		} elseif (!empty($id_brand)) {
+			$this->db->where('ap_produk.id_brand', $id_brand);
 		}
 
 		//$this->db->group_by("ap_invoice_number.no_invoice","ap_invoice_number.id_produk");
