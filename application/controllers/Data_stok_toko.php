@@ -155,8 +155,8 @@ class Data_stok_toko extends BaseController{
 		$nomor_urut=$start+1;
 		foreach ($query->result_array() as $dt) {
 
-			$harga_jual = $this->modelProduk->hargaJual($dt['id_produk'],$idToko);
-			$harga_beli = $this->modelProduk->hargaBeli($dt['id_produk'],$idToko);
+			$harga_jual = $dt['harga_jual'];
+			$harga_beli = $dt['harga_beli'];
 			$margin = $this->modelProduk->margin($dt['id_produk'],$idToko);
 
 			$output['data'][]=array($nomor_urut,"<a href='".base_url('data_stok_toko/info_SOitem?sku='.$dt['id_produk'])."&idToko=".$idToko."'>".$dt['id_produk']."</a>",$dt['nama_produk'],$dt['kategori']."-".$dt['kategori_level_1']."-".$dt['kategori_3']."-".$dt['kategori_level_1']."-".$dt['kategori_3'],number_format($harga_beli,'0',',','.'),number_format($harga_jual,'0',',','.'),number_format($margin,'2',',','.'),number_format($dt['stok'],'0',',',''),number_format($dt['stok']*$harga_beli,'0',',','.'));

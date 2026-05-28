@@ -230,13 +230,19 @@ Class ModelProduk extends CI_Model{
 	}
 
 	function dataStokTokoFullInventori($id){
-		$query = "SELECT SUM(stok_store.hpp*stok_store.stok) as nilai,
-						SUM(stok_store.harga*stok_store.stok) as nilaiJual
+		$query = "SELECT SUM(stok_store.hpp * sk.stok) as nilai,
+						SUM(stok_store.harga * sk.stok) as nilaiJual
 				  FROM stok_store
 				  LEFT OUTER JOIN ap_produk ON ap_produk.id_produk = stok_store.id_produk
+				  LEFT JOIN (
+				  	SELECT id_produk, SUM(qty) as stok
+				  	FROM stok_store_kartu
+				  	WHERE id_store = '$id'
+				  	GROUP BY id_produk
+				  ) sk ON sk.id_produk = stok_store.id_produk
 				  WHERE stok_store.id_store = '$id'
 				  and ap_produk.status=1
-				  and stok_store.stok<>0";
+				  and sk.stok<>0";
 		return $this->db->query($query);
 		
 	}

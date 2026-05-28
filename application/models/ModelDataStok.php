@@ -209,18 +209,18 @@ Class ModelDataStok extends CI_Model{
 	}
 
 	function dataStokToko($limit,$start,$search='',$idToko,$idKategori,$subkategori,$subSubKategori,$stokSign,$stokValue,$priceSign,$priceSignValue,$idStand,$salePriceSign,$salePriceValue,$id_supplier,$id_brand,$stokMinim){
-		$this->db->select(array("ap_produk.id_produk","ap_produk.nama_produk","ap_produk.id_brand","stok_store.stok","ap_kategori.kategori","ap_kategori_1.kategori_level_1","ap_kategori_2.kategori_3","stok_store.hpp as harga_beli","ap_stand.stand"));
+		$this->db->select(array("ap_produk.id_produk","ap_produk.nama_produk","ap_produk.id_brand","ap_kategori.kategori","ap_kategori_1.kategori_level_1","ap_kategori_2.kategori_3","stok_store.hpp as harga_beli","stok_store.harga as harga_jual","ap_stand.stand"));
+		$this->db->select("COALESCE(sk.stok, 0) as stok", FALSE);
 		$this->db->from("stok_store");
 		$this->db->join("ap_produk","ap_produk.id_produk = stok_store.id_produk");
 		$this->db->join("ap_kategori","ap_kategori.id_kategori = ap_produk.id_kategori","left");
 		$this->db->join("ap_kategori_1","ap_kategori_1.id = ap_produk.id_subkategori","left");
 		$this->db->join("ap_kategori_2","ap_kategori_2.id = ap_produk.id_subkategori_2","left");
 		$this->db->join("ap_stand","ap_stand.id_stand = ap_produk.tempat","left");
-		//$this->db->join("ap_produk_price","ap_produk_price.id_produk = ap_produk.id_produk");
+		$this->db->join("(SELECT id_produk, SUM(qty) as stok FROM stok_store_kartu WHERE id_store = '$idToko' GROUP BY id_produk) sk","sk.id_produk = stok_store.id_produk","left");
 
 		if(!empty($search)){
 			$this->db->where("concat_ws('',ap_produk.nama_produk,ap_produk.id_produk) like '%$search%'");
-			//$this->db->or_like("ap_produk.id_produk",$search);
 		}
 
 		if(!empty($id_supplier)){
@@ -248,11 +248,11 @@ Class ModelDataStok extends CI_Model{
 		}
 
 		if(!empty($stokSign) && !empty($stokValue)){
-			$this->db->where("stok_store.stok".$stokSign.$stokValue);
+			$this->db->where("COALESCE(sk.stok, 0)".$stokSign.$stokValue);
 		}
 
 		if(!empty($stokMinim)){
-			$this->db->where("stok_store.stok < stok_store.min");
+			$this->db->where("COALESCE(sk.stok, 0) < stok_store.min");
 			$this->db->where("stok_store.min>0");
 		}
 
@@ -265,21 +265,21 @@ Class ModelDataStok extends CI_Model{
 		}
 
 		$this->db->where("stok_store.id_store",$idToko);
-		//$this->db->where("ap_produk_price.id_toko",$idToko);
 		$this->db->limit($limit,$start);
 		$this->db->group_by("ap_produk.id_produk");
 		return $this->db->get();
 	}
 
 	function dataStokTokoFilterExport($idToko,$idKategori,$subkategori,$subSubKategori,$stokSign,$stokValue,$priceSign,$priceSignValue,$idStand,$salePriceSign,$salePriceValue,$id_supplier,$id_brand,$stokMinim){
-		$this->db->select(array("ap_produk.id_produk","ap_produk.nama_produk","stok_store.stok","ap_kategori.kategori","ap_kategori_1.kategori_level_1","ap_kategori_2.kategori_3","stok_store.hpp as harga_beli","ap_stand.stand"));
+		$this->db->select(array("ap_produk.id_produk","ap_produk.nama_produk","ap_kategori.kategori","ap_kategori_1.kategori_level_1","ap_kategori_2.kategori_3","stok_store.hpp as harga_beli","ap_stand.stand"));
+		$this->db->select("COALESCE(sk.stok, 0) as stok", FALSE);
 		$this->db->from("stok_store");
 		$this->db->join("ap_produk","ap_produk.id_produk = stok_store.id_produk");
 		$this->db->join("ap_kategori","ap_kategori.id_kategori = ap_produk.id_kategori");
 		$this->db->join("ap_kategori_1","ap_kategori_1.id = ap_produk.id_subkategori","left");
 		$this->db->join("ap_kategori_2","ap_kategori_2.id = ap_produk.id_subkategori_2","left");
 		$this->db->join("ap_stand","ap_stand.id_stand = ap_produk.tempat","left");
-		//$this->db->join("ap_produk_price","ap_produk_price.id_produk = ap_produk.id_produk");
+		$this->db->join("(SELECT id_produk, SUM(qty) as stok FROM stok_store_kartu WHERE id_store = '$idToko' GROUP BY id_produk) sk","sk.id_produk = stok_store.id_produk","left");
 
 		if(!empty($id_brand)){
 			$this->db->where("ap_produk.id_brand",$id_brand);
@@ -306,11 +306,11 @@ Class ModelDataStok extends CI_Model{
 		}
 
 		if(!empty($stokSign) && !empty($stokValue)){
-			$this->db->where("stok_store.stok".$stokSign.$stokValue);
+			$this->db->where("COALESCE(sk.stok, 0)".$stokSign.$stokValue);
 		}
 
 		if(!empty($stokMinim)){
-			$this->db->where("stok_store.stok < stok_store.min");
+			$this->db->where("COALESCE(sk.stok, 0) < stok_store.min");
 			$this->db->where("stok_store.min>0");
 		}
 
@@ -323,7 +323,6 @@ Class ModelDataStok extends CI_Model{
 		}
 
 		$this->db->where("stok_store.id_store",$idToko);
-		//$this->db->where("ap_produk_price.id_toko",$idToko);
 		$this->db->group_by("ap_produk.id_produk");
 		return $this->db->get();
 	}
